@@ -150,4 +150,4 @@ if user_input := st.chat_input("Ask a question about your documents..."):
                 config={"configurable": {"session_id": session_id}},
             )
             with st.chat_message("ai"):
-                st.markdown(response['answers'])
+                st.markdown(response['answer'])
