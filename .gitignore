@@ -1,0 +1,9 @@
+Environment variables
+.env
+
+Python cache
+pycache/
+*.pyc
+
+Temporary files created by the app
+temp.pdf
