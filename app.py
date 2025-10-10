@@ -11,116 +11,143 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 import os
-
 from dotenv import load_dotenv
+
+# --- Page Configuration ---
+st.set_page_config(page_title="NBT Chatbot", page_icon="🤖", layout="wide")
+
+# --- Custom CSS for Styling ---
+st.markdown("""
+<style>
+    .main {
+        background-color: #f0f2f6;
+    }
+    .st-emotion-cache-1y4p8pa {
+        padding-top: 2rem;
+    }
+    /* You can add more specific chat message styling here if needed */
+</style>
+""", unsafe_allow_html=True)
+
+# --- Environment Variable and API Key Loading ---
 load_dotenv()
+os.environ['HF_TOKEN'] = os.getenv("HF_TOKEN")
+groq_api_key = os.getenv("GROQ_API_KEY")
 
-os.environ['HF_TOKEN']=os.getenv("HF_TOKEN")
-embeddings=HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+# --- Embedding Model ---
+embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
+# --- Session State Initialization ---
+if 'store' not in st.session_state:
+    st.session_state.store = {}
+if 'conversational_rag_chain' not in st.session_state:
+    st.session_state.conversational_rag_chain = None
 
-## set up Streamlit 
-st.title("AI Chatbot for PDF's")
-st.write("Upload Pdf's and chat with their content")
+# --- Sidebar for Controls ---
+with st.sidebar:
+    st.header("Controls")
+    session_id = st.text_input("Session ID", value="default_session")
+    
+    if st.button("Clear Chat History"):
+        if session_id in st.session_state.store:
+            st.session_state.store[session_id].clear()
+            st.success("Chat history cleared!")
+        else:
+            st.info("No active chat history to clear.")
+            
+    uploaded_files = st.file_uploader("Upload your PDFs", type="pdf", accept_multiple_files=True)
 
-## Input the Groq API Key
-api_key=st.text_input("Enter your Groq API key:",type="password")
+# --- Main App Interface ---
+st.title("🤖 NBT Chatbot")
+st.write("Your intelligent assistant for PDF content. Upload documents in the sidebar to begin.")
 
-## Check if groq api key is provided
-if api_key:
-    llm=ChatGroq(groq_api_key=api_key,model_name="Gemma2-9b-It")
+# --- API Key Check ---
+if not groq_api_key:
+    st.warning("Groq API key not found. Please create a .env file and add GROQ_API_KEY='your_key'")
+    st.stop()
 
-    ## chat interface
-
-    session_id=st.text_input("Session ID",value="default_session")
-    ## statefully manage chat history
-
-    if 'store' not in st.session_state:
-        st.session_state.store={}
-
-    uploaded_files=st.file_uploader("Choose A PDf file",type="pdf",accept_multiple_files=True)
-    ## Process uploaded  PDF's
-    if uploaded_files:
-        documents=[]
+# --- PDF Processing and RAG Chain Creation ---
+if uploaded_files:
+    with st.spinner("Processing PDFs... This may take a moment."):
+        documents = []
         for uploaded_file in uploaded_files:
-            temppdf=f"./temp.pdf"
-            with open(temppdf,"wb") as file:
-                file.write(uploaded_file.getvalue())
-                file_name=uploaded_file.name
+            temp_path = f"./{uploaded_file.name}"
+            with open(temp_path, "wb") as f:
+                f.write(uploaded_file.getvalue())
+            loader = PyPDFLoader(temp_path)
+            documents.extend(loader.load())
+            os.remove(temp_path) # Clean up temporary file
 
-            loader=PyPDFLoader(temppdf)
-            docs=loader.load()
-            documents.extend(docs)
-
-    # Split and create embeddings for the documents
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=500)
         splits = text_splitter.split_documents(documents)
         vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
-        retriever = vectorstore.as_retriever()    
+        retriever = vectorstore.as_retriever()
 
-        contextualize_q_system_prompt=(
-            "Given a chat history and the latest user question"
+        llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-8b-instant")
+
+        # Contextualization prompt
+        contextualize_q_system_prompt = (
+            "Given a chat history and the latest user question "
             "which might reference context in the chat history, "
             "formulate a standalone question which can be understood "
             "without the chat history. Do NOT answer the question, "
             "just reformulate it if needed and otherwise return it as is."
         )
-        contextualize_q_prompt = ChatPromptTemplate.from_messages(
-                [
-                    ("system", contextualize_q_system_prompt),
-                    MessagesPlaceholder("chat_history"),
-                    ("human", "{input}"),
-                ]
-            )
-        
-        history_aware_retriever=create_history_aware_retriever(llm,retriever,contextualize_q_prompt)
+        contextualize_q_prompt = ChatPromptTemplate.from_messages([
+            ("system", contextualize_q_system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ])
+        history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
 
-        ## Answer question
-
-        # Answer question
+        # Answering prompt
         system_prompt = (
-                "You are an assistant for question-answering tasks. "
-                "Use the following pieces of retrieved context to answer "
-                "the question. If you don't know the answer, say that you "
-                "don't know. Use three sentences maximum and keep the "
-                "answer concise."
-                "\n\n"
-                "{context}"
-            )
-        qa_prompt = ChatPromptTemplate.from_messages(
-                [
-                    ("system", system_prompt),
-                    MessagesPlaceholder("chat_history"),
-                    ("human", "{input}"),
-                ]
-            )
-        
-        question_answer_chain=create_stuff_documents_chain(llm,qa_prompt)
-        rag_chain=create_retrieval_chain(history_aware_retriever,question_answer_chain)
+            "You are an assistant for question-answering tasks. "
+            "Use the following pieces of retrieved context to answer the question. "
+            "If you don't know the answer, say that you don't know. "
+            "Use three sentences maximum and keep the answer concise.\n\n{context}"
+        )
+        qa_prompt = ChatPromptTemplate.from_messages([
+            ("system", system_prompt),
+            MessagesPlaceholder("chat_history"),
+            ("human", "{input}"),
+        ])
+        question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
+        rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-        def get_session_history(session:str)->BaseChatMessageHistory:
-            if session_id not in st.session_state.store:
-                st.session_state.store[session_id]=ChatMessageHistory()
-            return st.session_state.store[session_id]
-        
-        conversational_rag_chain=RunnableWithMessageHistory(
-            rag_chain,get_session_history,
+        def get_session_history(session: str) -> BaseChatMessageHistory:
+            if session not in st.session_state.store:
+                st.session_state.store[session] = ChatMessageHistory()
+            return st.session_state.store[session]
+
+        st.session_state.conversational_rag_chain = RunnableWithMessageHistory(
+            rag_chain,
+            get_session_history,
             input_messages_key="input",
             history_messages_key="chat_history",
-            output_messages_key="answer"
+            output_messages_key="answer",
         )
+    st.success("PDFs processed successfully! You can now ask questions.")
 
-        user_input = st.text_input("Your question:")
-        if user_input:
-            session_history=get_session_history(session_id)
-            response = conversational_rag_chain.invoke(
+# --- Chat Interface Logic ---
+# Display chat messages from history
+history = st.session_state.store.get(session_id, ChatMessageHistory())
+for message in history.messages:
+    with st.chat_message(message.type):
+        st.markdown(message.content)
+
+# Accept user input
+if user_input := st.chat_input("Ask a question about your documents..."):
+    with st.chat_message("human"):
+        st.markdown(user_input)
+
+    if st.session_state.conversational_rag_chain is None:
+        st.warning("Please upload and process at least one PDF to begin.")
+    else:
+        with st.spinner("NBT is thinking..."):
+            response = st.session_state.conversational_rag_chain.invoke(
                 {"input": user_input},
-                config={
-                    "configurable": {"session_id":session_id}
-                },  # constructs a key "abc123" in `store`.
+                config={"configurable": {"session_id": session_id}},
             )
-            st.write(st.session_state.store)
-            st.write("Assistant:", response['answer'])
-            st.write("Chat History:", session_history.messages)
-else:
-    st.warning("Please enter the GRoq API Key")
+            with st.chat_message("ai"):
+                st.markdown(response['answer'])
