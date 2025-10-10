@@ -144,7 +144,7 @@ if user_input := st.chat_input("Ask a question about your documents..."):
     if st.session_state.conversational_rag_chain is None:
         st.warning("Please upload and process at least one PDF to begin.")
     else:
-        with st.spinner("NBT is thinking..."):
+        with st.spinner("NBT Chatbot is thinking..."):
             response = st.session_state.conversational_rag_chain.invoke(
                 {"input": user_input},
                 config={"configurable": {"session_id": session_id}},
