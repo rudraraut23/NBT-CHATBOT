@@ -12,6 +12,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 import os
 from dotenv import load_dotenv
+import base64
 
 # --- Page Configuration ---
 st.set_page_config(page_title="NBT Chatbot", page_icon="🤖", layout="wide")
@@ -28,6 +29,28 @@ st.markdown("""
     /* You can add more specific chat message styling here if needed */
 </style>
 """, unsafe_allow_html=True)
+
+# --- Function to play audio ---
+def autoplay_audio(file_path: str):
+    """
+    Embeds and autoplays an audio file in the Streamlit app.
+    The function takes a file path, encodes the audio file to base64,
+    and uses HTML to embed an invisible, auto-playing audio player.
+    """
+    try:
+        with open(file_path, "rb") as f:
+            data = f.read()
+        b64 = base64.b64encode(data).decode()
+        md = f"""
+            <audio controls autoplay="true" style="display:none;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+            </audio>
+            """
+        st.markdown(md, unsafe_allow_html=True)
+    except FileNotFoundError:
+        st.warning(f"Audio file not found. Please ensure 'notification.mp3' is in the same directory.")
+    except Exception as e:
+        st.error(f"Error playing audio: {e}")
 
 # --- Environment Variable and API Key Loading ---
 load_dotenv()
@@ -70,8 +93,11 @@ if not groq_api_key:
 if uploaded_files:
     with st.spinner("Processing PDFs... This may take a moment."):
         documents = []
+        temp_dir = "temp_pdf_files"
+        os.makedirs(temp_dir, exist_ok=True)
+        
         for uploaded_file in uploaded_files:
-            temp_path = f"./{uploaded_file.name}"
+            temp_path = os.path.join(temp_dir, uploaded_file.name)
             with open(temp_path, "wb") as f:
                 f.write(uploaded_file.getvalue())
             loader = PyPDFLoader(temp_path)
@@ -102,16 +128,17 @@ if uploaded_files:
 
         # Answering prompt
         system_prompt = (
-            "You are an assistant for question-answering tasks. "
-            "Use the following pieces of retrieved context to answer the question. "
-            "If you don't know the answer, say that you don't know. "
-            "Use three sentences maximum and keep the answer concise.\n\n{context}"
-        )
+    # --- MODIFIED LINE ---
+    "You are NBT Chatbot, an assistant specialized in answering questions about PDF documents. "
+    "Use the following pieces of retrieved context to answer the question. "
+    "If you don't know the answer, just say that you don't know. "
+    "Use three sentences maximum and keep the answer concise.\n\n{context}"
+)
         qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ])
+    ("system", system_prompt),
+    MessagesPlaceholder("chat_history"),
+    ("human", "{input}"),
+])
         question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
         rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
@@ -150,4 +177,19 @@ if user_input := st.chat_input("Ask a question about your documents..."):
                 config={"configurable": {"session_id": session_id}},
             )
             with st.chat_message("ai"):
-                st.markdown(response['answersyth'])
+                st.markdown(response['answer'])
+                autoplay_audio(r"C:\Users\rautr\Desktop\Scalable AI Chatbot\new-notification-3-398649.mp3") 
+
+                source_documents = response.get('context', [])
+                if source_documents:
+                    unique_sources = set()
+                    for doc in source_documents:
+                        source_name = os.path.basename(doc.metadata.get('source', 'Unknown'))
+                        page_num = doc.metadata.get('page', -1) + 1
+                        if page_num > 0:
+                            unique_sources.add((source_name, page_num))
+                    
+                    if unique_sources:
+                        with st.expander("View Sources"):
+                            for source, page in sorted(list(unique_sources)):
+                                st.write(f"📄 **{source}** (Page: {page})")
