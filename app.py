@@ -164,7 +164,7 @@ for message in history.messages:
         st.markdown(message.content)
 
 # Accept user input
-if user_input := st.chat_input("Ask a question about your documents..."):
+if user_input := st.chat_input("Ask a question about your document..."):
     with st.chat_message("human"):
         st.markdown(user_input)
 
