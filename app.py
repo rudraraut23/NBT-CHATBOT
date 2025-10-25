@@ -1,6 +1,6 @@
 import streamlit as st
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain.chains.combine_documents.stuff import create_stuff_documents_chain
 from langchain_chroma import Chroma
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
@@ -30,11 +30,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-<<<<<<< HEAD
-#  Function to play audio
-=======
 # --- Function to play audio ---
->>>>>>> c11300fdab0d11aa5a0098200a77edd7ec82cd51
 def autoplay_audio(file_path: str):
     """
     Embeds and autoplays an audio file in the Streamlit app.
@@ -56,11 +52,7 @@ def autoplay_audio(file_path: str):
     except Exception as e:
         st.error(f"Error playing audio: {e}")
 
-<<<<<<< HEAD
-#  Environment Variable and API Key Loading 
-=======
 # --- Environment Variable and API Key Loading ---
->>>>>>> c11300fdab0d11aa5a0098200a77edd7ec82cd51
 load_dotenv()
 os.environ['HF_TOKEN'] = os.getenv("HF_TOKEN")
 groq_api_key = os.getenv("GROQ_API_KEY")
@@ -109,11 +101,7 @@ if not groq_api_key:
 if uploaded_files:
     with st.spinner("Processing documents... This may take a moment."):
         documents = []
-<<<<<<< HEAD
-        temp_dir = "temp_files"
-=======
         temp_dir = "temp_pdf_files"
->>>>>>> c11300fdab0d11aa5a0098200a77edd7ec82cd51
         os.makedirs(temp_dir, exist_ok=True)
         
         for uploaded_file in uploaded_files:
@@ -172,21 +160,12 @@ if uploaded_files:
 
         # Answering prompt
         system_prompt = (
-<<<<<<< HEAD
-            # --- MODIFIED LINE (Good Practice) ---
-            "You are NBT Chatbot, an assistant specialized in answering questions about documents. " 
-            "Use the following pieces of retrieved context to answer the question. "
-            "If you don't know the answer, just say that you don't know. "
-            "Use three sentences maximum and keep the answer concise.\n\n{context}"
-        )
-=======
     # --- MODIFIED LINE ---
     "You are NBT Chatbot, an assistant specialized in answering questions about PDF documents. "
     "Use the following pieces of retrieved context to answer the question. "
     "If you don't know the answer, just say that you don't know. "
     "Use three sentences maximum and keep the answer concise.\n\n{context}"
 )
->>>>>>> c11300fdab0d11aa5a0098200a77edd7ec82cd51
         qa_prompt = ChatPromptTemplate.from_messages([
     ("system", system_prompt),
     MessagesPlaceholder("chat_history"),
@@ -219,12 +198,7 @@ for message in history.messages:
         st.markdown(message.content)
 
 # Accept user input
-<<<<<<< HEAD
-# Accept user input
-if user_input := st.chat_input("Ask a question about your documents..."):
-=======
 if user_input := st.chat_input("Ask a question about your document..."):
->>>>>>> c11300fdab0d11aa5a0098200a77edd7ec82cd51
     with st.chat_message("human"):
         st.markdown(user_input)
 
@@ -240,33 +214,6 @@ if user_input := st.chat_input("Ask a question about your document..."):
             
             with st.chat_message("ai"):
                 st.markdown(response['answer'])
-<<<<<<< HEAD
-                # NOTE: The path to your audio file looks like an absolute path, 
-                # which might cause issues if the code is run on a different machine.
-                # Consider placing the audio file in the same directory or using a relative path.
-                autoplay_audio(r"C:\Users\rautr\Desktop\Scalable AI Chatbot\new-notification-3-398649.mp3") 
-
-                # --- START: The source document logic MUST be here ---
-                source_documents = response.get('context', [])
-                if source_documents:
-                    
-                    unique_sources = set()
-                    for doc in source_documents:
-                        source_name = os.path.basename(doc.metadata.get('source', 'Unknown'))
-                        page_num = doc.metadata.get('page', None) 
-                        
-                        if page_num is not None:
-                            unique_sources.add(f"📄 **{source_name}** (Page: {page_num + 1})")
-                        else:
-                            # Fallback for DOCX or other file types without standard page numbers
-                            unique_sources.add(f"📄 **{source_name}** (No Page Info)") 
-                    
-                    if unique_sources:
-                        with st.expander("View Sources"):
-                            st.markdown("---")
-                            for source_info in sorted(list(unique_sources)):
-                                st.markdown(source_info)
-=======
                 autoplay_audio(r"C:\Users\rautr\Desktop\Scalable AI Chatbot\new-notification-3-398649.mp3") 
 
                 source_documents = response.get('context', [])
@@ -282,4 +229,3 @@ if user_input := st.chat_input("Ask a question about your document..."):
                         with st.expander("View Sources"):
                             for source, page in sorted(list(unique_sources)):
                                 st.write(f"📄 **{source}** (Page: {page})")
->>>>>>> c11300fdab0d11aa5a0098200a77edd7ec82cd51
