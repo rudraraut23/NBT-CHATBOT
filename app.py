@@ -216,7 +216,7 @@ if user_input := st.chat_input("Ask a question about your document..."):
             
             with st.chat_message("ai"):
                 st.markdown(response['answer'])
-                autoplay_audio(r"C:\Users\rautr\Desktop\Scalable AI Chatbot\new-notification-3-398649.mp3") 
+                autoplay_audio(r"new-notification-3-398649.mp3")
 
                 source_documents = response.get('context', [])
                 if source_documents:
