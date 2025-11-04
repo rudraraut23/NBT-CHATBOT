@@ -160,13 +160,17 @@ if uploaded_files:
         history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
 
         # Answering prompt
+        # Answering prompt
         system_prompt = (
-    # --- MODIFIED LINE ---
-    "You are NBT Chatbot, an assistant specialized in answering questions about PDF documents. "
-    "Use the following pieces of retrieved context to answer the question. "
-    "If you don't know the answer, just say that you don't know. "
-    "Use three sentences maximum and keep the answer concise.\n\n{context}"
-)
+            "You are NBT Chatbot, an assistant that answers questions **ONLY** based on the provided documents. "
+            "Your task is to use **ONLY** the following pieces of retrieved context to answer the user's question. "
+            "**DO NOT** use any external knowledge or make up information. "
+            "If the answer **cannot** be found in the provided context, you **MUST** say: "
+            "'I'm sorry, I couldn't find that information in the provided documents.' "
+            "Keep the answer concise.\n\n"
+            "Here is the context:\n{context}"
+        )
+
         qa_prompt = ChatPromptTemplate.from_messages([
     ("system", system_prompt),
     MessagesPlaceholder("chat_history"),
@@ -215,18 +219,31 @@ if user_input := st.chat_input("Ask a question about your document..."):
             
             with st.chat_message("ai"):
                 st.markdown(response['answer'])
-                autoplay_audio(r"C:\Users\rautr\Desktop\Scalable AI Chatbot\new-notification-3-398649.mp3") 
+                autoplay_audio(r"new-notification-3-398649.mp3") 
 
                 source_documents = response.get('context', [])
-                if source_documents:
-                    unique_sources = set()
-                    for doc in source_documents:
-                        source_name = os.path.basename(doc.metadata.get('source', 'Unknown'))
-                        page_num = doc.metadata.get('page', -1) + 1
-                        if page_num > 0:
-                            unique_sources.add((source_name, page_num))
+            if source_documents:
+                unique_sources = set()
+                
+                for doc in source_documents:
+                    source_name = os.path.basename(doc.metadata.get('source', 'Unknown'))
                     
-                    if unique_sources:
-                        with st.expander("View Sources"):
-                            for source, page in sorted(list(unique_sources)):
-                                st.write(f"📄 **{source}** (Page: {page})")
+                    # Check if it's a PDF and has a page number
+                    if source_name.lower().endswith(".pdf"):
+                        page_num = doc.metadata.get('page', -1)
+                        if page_num != -1:
+                            # Add 1 because PyPDFLoader is 0-indexed
+                            unique_sources.add(f"{source_name} (Page: {page_num + 1})")
+                        else:
+                            # PDF, but page number was not found
+                            unique_sources.add(source_name)
+                    else:
+                        # For DOCX or other files that don't have page numbers
+                        unique_sources.add(source_name)
+                
+                if unique_sources:
+                    with st.expander("View Sources"):
+                        # Sort the list for a consistent order
+                        for source_info in sorted(list(unique_sources)):
+                            st.write(f"📄 **{source_info}**")
+            # --- END: REPLACEMENT BLOCK FOR SOURCES ---
