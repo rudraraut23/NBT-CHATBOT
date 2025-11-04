@@ -62,8 +62,9 @@ groq_api_key = os.getenv("GROQ_API_KEY")
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
 #  Session State Initialization 
-if 'store' not in st.session_state:
-    st.session_state.store = {}
+ 
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = ChatMessageHistory()
 if 'conversational_rag_chain' not in st.session_state:
     st.session_state.conversational_rag_chain = None
 
@@ -71,18 +72,11 @@ if 'conversational_rag_chain' not in st.session_state:
 
 #  Sidebar for Controls 
 with st.sidebar:
-    st.header("Controls")
-    
-    
-    session_id = st.text_input("Session ID", value="default_session")
-    
-    
+    st.header("Controls") 
     if st.button("Clear Chat History"):
-        if session_id in st.session_state.store:
-            st.session_state.store[session_id].clear()
-            st.success("Chat history cleared!")
-        else:
-            st.info("No active chat history to clear.")
+        # Just create a new, empty history object for this user
+        st.session_state.chat_history = ChatMessageHistory()
+        st.success("Chat history cleared!")
             
     uploaded_files = st.file_uploader(
         "Upload your documents (PDF, DOCX)",
@@ -179,10 +173,9 @@ if uploaded_files:
         question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
         rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-        def get_session_history(session: str) -> BaseChatMessageHistory:
-            if session not in st.session_state.store:
-                st.session_state.store[session] = ChatMessageHistory()
-            return st.session_state.store[session]
+        def get_session_history(session_id: str) -> BaseChatMessageHistory:
+            # We ignore the session_id and just return this user's unique history
+         return st.session_state.chat_history
 
         st.session_state.conversational_rag_chain = RunnableWithMessageHistory(
             rag_chain,
@@ -197,10 +190,10 @@ if uploaded_files:
 
 
 # Display chat messages from history
-history = st.session_state.store.get(session_id, ChatMessageHistory()) 
-for message in history.messages:
+# Display chat messages from history
+for message in st.session_state.chat_history.messages:
     with st.chat_message(message.type):
-        st.markdown(message.content)
+      st.markdown(message.content)
 
 # Accept user input
 if user_input := st.chat_input("Ask a question about your document..."):
@@ -213,9 +206,10 @@ if user_input := st.chat_input("Ask a question about your document..."):
         # --- This is the BLOCK where 'response' is defined ---
         with st.spinner("NBT Chatbot is thinking..."):
             response = st.session_state.conversational_rag_chain.invoke(
-                {"input": user_input},
-                config={"configurable": {"session_id": session_id}},
-            )
+ {"input": user_input},
+                # This can be any string, it's just a placeholder now
+                 config={"configurable": {"session_id": "user_session"}}, 
+)
             
             with st.chat_message("ai"):
                 st.markdown(response['answer'])
