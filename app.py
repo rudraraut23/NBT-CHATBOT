@@ -5,7 +5,7 @@ import langchain
 # These are the correct, modern imports
 from langchain.chains import create_history_aware_retriever
 from langchain.chains import create_retrieval_chain
-from langchain.chains import create_stuff_documents_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 # --- MODIFIED LINES END ---
 
 from langchain_chroma import Chroma
