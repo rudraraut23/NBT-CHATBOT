@@ -238,7 +238,7 @@ if user_input := st.chat_input("Ask a question about your document..."):
                 for doc in source_documents:
                     source_name = os.path.basename(doc.metadata.get('source', 'Unknown'))
                     
-                    if source_name.lower().endswith(".pdf"):
+                    if source_name.lower().endswith(".pdf",".docx"):
                         page_num = doc.metadata.get('page', -1)
                         if page_num != -1:
                             unique_sources.add(f"{source_name} (Page: {page_num + 1})")
