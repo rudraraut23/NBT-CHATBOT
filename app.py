@@ -1,8 +1,13 @@
 import streamlit as st
 import langchain
-from langchain.chains.history_aware_retriever import create_history_aware_retriever
-from langchain.chains.retrieval import create_retrieval_chain
-from langchain.chains.combine_documents.stuff import create_stuff_documents_chain
+
+# --- MODIFIED LINES START ---
+# These are the correct, modern imports
+from langchain.chains import create_history_aware_retriever
+from langchain.chains import create_retrieval_chain
+from langchain.chains import create_stuff_documents_chain
+# --- MODIFIED LINES END ---
+
 from langchain_chroma import Chroma
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
@@ -28,7 +33,6 @@ st.markdown("""
     .st-emotion-cache-1y4p8pa {
         padding-top: 2rem;
     }
-    /* You can add more specific chat message styling here if needed */
 </style>
 """, unsafe_allow_html=True)
 
@@ -36,8 +40,6 @@ st.markdown("""
 def autoplay_audio(file_path: str):
     """
     Embeds and autoplays an audio file in the Streamlit app.
-    The function takes a file path, encodes the audio file to base64,
-    and uses HTML to embed an invisible, auto-playing audio player.
     """
     try:
         with open(file_path, "rb") as f:
@@ -50,14 +52,16 @@ def autoplay_audio(file_path: str):
             """
         st.markdown(md, unsafe_allow_html=True)
     except FileNotFoundError:
-        st.warning(f"Audio file not found. Please ensure 'notification.mp3' is in the same directory.")
+        # This file must be in your GitHub repository to work
+        st.warning(f"Audio file not found. Make sure {file_path} is in your repo.")
     except Exception as e:
         st.error(f"Error playing audio: {e}")
 
 # --- Environment Variable and API Key Loading ---
 load_dotenv()
 os.environ['HF_TOKEN'] = os.getenv("HF_TOKEN")
-groq_api_key = os.getenv("GROQ_API_KEY")
+# NOTE: For Streamlit Cloud, you must set GROQ_API_KEY in the app's Secrets
+groq_api_key = os.getenv("GROQ_API_KEY") or st.secrets.get("GROQ_API_KEY")
 
 #  Embedding Model 
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
@@ -67,16 +71,17 @@ if 'store' not in st.session_state:
     st.session_state.store = {}
 if 'conversational_rag_chain' not in st.session_state:
     st.session_state.conversational_rag_chain = None
-
+if 'session_id' not in st.session_state:
+    st.session_state.session_id = "default_session"
 
 
 #  Sidebar for Controls 
 with st.sidebar:
     st.header("Controls")
     
-    
-    session_id = st.text_input("Session ID", value="default_session")
-    
+    # Use session state for session_id
+    st.session_state.session_id = st.text_input("Session ID", value=st.session_state.session_id)
+    session_id = st.session_state.session_id # Get current session_id
     
     if st.button("Clear Chat History"):
         if session_id in st.session_state.store:
@@ -86,7 +91,7 @@ with st.sidebar:
             st.info("No active chat history to clear.")
             
     uploaded_files = st.file_uploader(
-        "Upload your documents (PDF, DOCX, PNG, JPG)",
+        "Upload your documents (PDF, DOCX)",
         type=["pdf", "docx"], 
         accept_multiple_files=True
     )
@@ -96,7 +101,7 @@ st.write("Your intelligent assistant for PDF content. Upload documents in the si
 
 #  API Key Check 
 if not groq_api_key:
-    st.warning("Groq API key not found. Please create a .env file and add GROQ_API_KEY='your_key'")
+    st.warning("Groq API key not found. Please add it to your Streamlit Cloud app 'Secrets'.")
     st.stop()
 
 #  PDF Processing and RAG Chain Creation 
@@ -124,20 +129,20 @@ if uploaded_files:
 
             if loader:
                 try:
-                    # .load() returns a list of Documents
                     documents.extend(loader.load()) 
                 except Exception as e:
-                    # Catch errors (e.g., Tesseract not found)
                     st.error(f"Error loading {uploaded_file.name}: {e}")
             
-            os.remove(temp_path) 
+            try:
+                os.remove(temp_path) 
+            except Exception as e:
+                st.warning(f"Could not remove temp file: {e}")
 
         if not documents:
-            st.error("No valid documents were processed. Please check your files or Tesseract installation.")
+            st.error("No valid documents were processed. Please check your files.")
             st.stop()
             
             
-        # --- This block now only appears ONCE ---
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=500)
         splits = text_splitter.split_documents(documents)
         vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
@@ -162,7 +167,6 @@ if uploaded_files:
 
         # Answering prompt
         system_prompt = (
-    # --- MODIFIED LINE ---
     "You are NBT Chatbot, an assistant specialized in answering questions about PDF documents. "
     "Use the following pieces of retrieved context to answer the question. "
     "If you don't know the answer, just say that you don't know. "
@@ -189,13 +193,13 @@ if uploaded_files:
             output_messages_key="answer",
         )
         
-    #  Only ONE success message at the end 
     st.success("Documents processed successfully! You can now ask questions.")
 
 
 # Display chat messages from history
-history = st.session_state.store.get(session_id, ChatMessageHistory()) 
-for message in history.messages:
+# Use the session_id from the sidebar
+current_history = st.session_state.store.get(session_id, ChatMessageHistory()) 
+for message in current_history.messages:
     with st.chat_message(message.type):
         st.markdown(message.content)
 
@@ -205,9 +209,8 @@ if user_input := st.chat_input("Ask a question about your document..."):
         st.markdown(user_input)
 
     if st.session_state.conversational_rag_chain is None:
-        st.warning("Please upload and process at least one PDF to begin.")
+        st.warning("Please upload and process at least one document to begin.")
     else:
-        # --- This is the BLOCK where 'response' is defined ---
         with st.spinner("NBT Chatbot is thinking..."):
             response = st.session_state.conversational_rag_chain.invoke(
                 {"input": user_input},
@@ -216,7 +219,8 @@ if user_input := st.chat_input("Ask a question about your document..."):
             
             with st.chat_message("ai"):
                 st.markdown(response['answer'])
-                autoplay_audio(r"new-notification-3-398649.mp3")
+                # This file MUST be in your GitHub repo
+                autoplay_audio(r"new-notification-3-398649.mp3") 
 
                 source_documents = response.get('context', [])
                 if source_documents:
