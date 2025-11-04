@@ -1,6 +1,4 @@
 import streamlit as st
-import langchain
-from langchain.chains import LLMChain
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents.stuff import create_stuff_documents_chain
@@ -139,16 +137,8 @@ if uploaded_files:
             
             
         # --- This block now only appears ONCE ---
-        # --- This block now only appears ONCE ---
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=500)
         splits = text_splitter.split_documents(documents)
-
-        # --- ADD THIS CHECK ---
-        if not splits:
-            st.error("Could not extract any text from the uploaded documents. Please check if they are image-only PDFs, blank, or corrupted.")
-            st.stop()
-        # --- END OF ADDED CHECK ---
-
         vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
         retriever = vectorstore.as_retriever()
 
@@ -225,7 +215,7 @@ if user_input := st.chat_input("Ask a question about your document..."):
             
             with st.chat_message("ai"):
                 st.markdown(response['answer'])
-                autoplay_audio(r"new-notification-3-398649.mp3")
+                autoplay_audio(r"C:\Users\rautr\Desktop\Scalable AI Chatbot\new-notification-3-398649.mp3") 
 
                 source_documents = response.get('context', [])
                 if source_documents:
