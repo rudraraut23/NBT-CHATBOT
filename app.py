@@ -139,8 +139,16 @@ if uploaded_files:
             
             
         # --- This block now only appears ONCE ---
+        # --- This block now only appears ONCE ---
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=500)
         splits = text_splitter.split_documents(documents)
+
+        # --- ADD THIS CHECK ---
+        if not splits:
+            st.error("Could not extract any text from the uploaded documents. Please check if they are image-only PDFs, blank, or corrupted.")
+            st.stop()
+        # --- END OF ADDED CHECK ---
+
         vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
         retriever = vectorstore.as_retriever()
 
