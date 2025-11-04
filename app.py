@@ -222,28 +222,34 @@ if user_input := st.chat_input("Ask a question about your document..."):
                 autoplay_audio(r"new-notification-3-398649.mp3") 
 
                 source_documents = response.get('context', [])
-            if source_documents:
+            # --- START: REPLACEMENT BLOCK FOR SOURCES ---
+
+            # You are missing these two lines:
+            answer = response.get('answer', '')
+            fallback_message = "I'm sorry, I couldn't find that information in the provided documents."
+            
+            # You already have this line:
+            source_documents = response.get('context', [])
+
+            # This 'if' statement will now work:
+            if source_documents and fallback_message not in answer:
                 unique_sources = set()
                 
                 for doc in source_documents:
                     source_name = os.path.basename(doc.metadata.get('source', 'Unknown'))
                     
-                    # Check if it's a PDF and has a page number
                     if source_name.lower().endswith(".pdf"):
                         page_num = doc.metadata.get('page', -1)
                         if page_num != -1:
-                            # Add 1 because PyPDFLoader is 0-indexed
                             unique_sources.add(f"{source_name} (Page: {page_num + 1})")
                         else:
-                            # PDF, but page number was not found
                             unique_sources.add(source_name)
                     else:
-                        # For DOCX or other files that don't have page numbers
                         unique_sources.add(source_name)
                 
                 if unique_sources:
                     with st.expander("View Sources"):
-                        # Sort the list for a consistent order
                         for source_info in sorted(list(unique_sources)):
                             st.write(f"📄 **{source_info}**")
             # --- END: REPLACEMENT BLOCK FOR SOURCES ---
+                    
