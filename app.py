@@ -4,9 +4,11 @@ import langchain
 # --- MODIFIED LINES START ---
 # These are the correct, modern imports
 # --- These are the correct, modern imports ---
+# --- Make sure your imports look like this ---
 from langchain.chains.history_aware_retriever import create_history_aware_retriever
 from langchain.chains.retrieval import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
+# --- End of imports to check ---
 # --- MODIFIED LINES END ---
 
 from langchain_chroma import Chroma

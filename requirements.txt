@@ -1,5 +1,5 @@
 streamlit
-langchain
+langchain>=0.1.0
 langchain-core
 langchain-community
 langchain-groq
@@ -12,6 +12,6 @@ docx2txt
 sentence-transformers
 chromadb
 
-# --- Add these lines at the bottom to fix the conflict ---
+# --- These lines fix the installation conflict ---
 markdown-it-py==3.0.0
 rich<14.0.0
