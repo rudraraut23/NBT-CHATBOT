@@ -1,4 +1,4 @@
-python_version == "3.11"
+
 streamlit
 langchain==0.3.26
 langchain-core
