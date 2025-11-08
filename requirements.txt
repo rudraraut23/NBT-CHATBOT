@@ -1,18 +1,20 @@
-
 streamlit
-langchain==0.3.26
-langchain-core
-langchain-community
-langchain-groq
-langchain-chroma
-langchain-huggingface
-langchain-text-splitters
 python-dotenv
+
+# LangChain stack - this lets pip find the correct, compatible versions
+langchain==0.3.26
+langchain-groq
+langchain-huggingface
+langchain-chroma
+langchain-community
+langchain-text-splitters
+
+# Parsing
+llama-parse
+nest-asyncio
+markdownify
+
+# Utilities
+sqlalchemy
 pypdf
 docx2txt
-sentence-transformers
-chromadb
-
-# --- These lines fix the installation conflict ---
-markdown-it-py==3.0.0
-rich<14.0.0

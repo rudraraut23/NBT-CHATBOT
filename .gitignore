@@ -7,3 +7,5 @@ pycache/
 
 Temporary files created by the app
 temp.pdf
+
+venv/

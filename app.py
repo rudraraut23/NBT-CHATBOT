@@ -1,249 +1,377 @@
+# streamlit_app.py
+import os
+import shutil
+import base64
+import asyncio
+import traceback
+import json
+from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
+
 import streamlit as st
-from langchain.chains.history_aware_retriever import create_history_aware_retriever
-from langchain.chains.retrieval import create_retrieval_chain
-from langchain.chains.combine_documents.stuff import create_stuff_documents_chain
+from dotenv import load_dotenv
+import nest_asyncio
+
+# LangChain / model imports (match your environment)
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_chroma import Chroma
 from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_groq import ChatGroq
 from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.documents import Document
+from langchain.retrievers import ParentDocumentRetriever
+from langchain_groq import ChatGroq
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
-import os
-from dotenv import load_dotenv
-import base64
+from langchain.storage import InMemoryStore
 
-# --- Page Configuration ---
-st.set_page_config(page_title="NBT Chatbot", page_icon="🤖", layout="wide")
+# LlamaParse (may be async or sync depending on version)
+from llama_parse import LlamaParse
 
-# --- Custom CSS for Styling ---
-st.markdown("""
-<style>
-    .main {
-        background-color: #f0f2f6;
-    }
-    .st-emotion-cache-1y4p8pa {
-        padding-top: 2rem;
-    }
-    /* You can add more specific chat message styling here if needed */
-</style>
-""", unsafe_allow_html=True)
+# For safe SBERT usage:
+try:
+    from sentence_transformers import SentenceTransformer
+except Exception:
+    SentenceTransformer = None  # handled later
 
-# --- Function to play audio ---
+# allow asyncio.run inside Streamlit
+nest_asyncio.apply()
+
+# Streamlit rerun compatibility (old/new versions)
+if not hasattr(st, "rerun") and hasattr(st, "experimental_rerun"):
+    st.rerun = st.experimental_rerun
+
+# Page config
+st.set_page_config(page_title="NBT Advanced CHATBOT", page_icon="🤖", layout="wide")
+st.markdown("<style>.main{background-color:#f7f9fc;}</style>", unsafe_allow_html=True)
+
+# Helpers
+# --- CORRECTED FUNCTION ---
+# --- FULLY CORRECTED FUNCTION ---
 def autoplay_audio(file_path: str):
     """
-    Embeds and autoplays an audio file in the Streamlit app.
-    The function takes a file path, encodes the audio file to base64,
-    and uses HTML to embed an invisible, auto-playing audio player.
+    Plays an audio file from a path by encoding it in base64.
     """
-    try:
-        with open(file_path, "rb") as f:
-            data = f.read()
-        b64 = base64.b64encode(data).decode()
-        md = f"""
-            <audio controls autoplay="true" style="display:none;">
-            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-            </audio>
-            """
-        st.markdown(md, unsafe_allow_html=True)
-    except FileNotFoundError:
-        st.warning(f"Audio file not found. Please ensure 'notification.mp3' is in the same directory.")
-    except Exception as e:
-        st.error(f"Error playing audio: {e}")
+    # FIX: This now correctly checks the 'file_path' variable 
+    # (e.g., "notification.mp3")
+    if os.path.exists(file_path):
+        try:
+            # This correctly opens the 'file_path' in binary mode
+            with open(file_path, "rb") as f:
+                data = f.read()
+            
+            b64 = base64.b64encode(data).decode()
+            md = f'<audio controls autoplay="true" style="display:none;"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>'
+            st.markdown(md, unsafe_allow_html=True)
+        
+        except Exception as e:
+            st.warning(f"Error playing audio {file_path}: {e}")
+    else:
+        # This 'else' block now works correctly.
+        st.warning(f"Audio file not found at: {file_path}")
 
-# --- Environment Variable and API Key Loading ---
+def safe_rmtree(path):
+    if os.path.exists(path):
+        try:
+            shutil.rmtree(path, ignore_errors=True)         
+        except Exception:
+            pass
+
+# Async thread executor helpers
+executor = ThreadPoolExecutor(max_workers=4)
+async def run_blocking(fn, *args, **kwargs):
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(executor, lambda: fn(*args, **kwargs))
+
+# Robust loader for parser.load_data that supports both sync and async variants
+async def robust_load_data(parser, path):
+    maybe = parser.load_data(path)
+    if asyncio.iscoroutine(maybe):
+        return asyncio.get_event_loop().run_until_complete(maybe)
+    return maybe
+
+# Load .env
 load_dotenv()
-os.environ['HF_TOKEN'] = os.getenv("HF_TOKEN")
 groq_api_key = os.getenv("GROQ_API_KEY")
+llama_api_key = os.getenv("LLAMA_CLOUD_API_KEY")
 
-#  Embedding Model 
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+# Warn if keys missing
+if not groq_api_key:
+    st.warning("GROQ_API_KEY not found in .env. If you want hosted LLM answers use Groq. You can still parse/index documents.")
 
-#  Session State Initialization 
- 
+# --- SAFE embeddings initialization using sentence-transformers on CPU ---
+if SentenceTransformer is None:
+    st.error("Module 'sentence_transformers' not installed. Install with: pip install sentence-transformers")
+    raise SystemExit("Install sentence-transformers and restart.")
+
+# Load SBERT on CPU explicitly to avoid meta-tensor device moves
+sbert = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
+
+class SimpleEmbeddingWrapper:
+    """
+    Minimal wrapper exposing embed_documents(texts) and embed_query(text).
+    Returns python lists of floats (suitable for most vector stores).
+    """
+    def __init__(self, model):
+        self.model = model
+
+    def embed_documents(self, texts):
+        # convert_to_numpy=True for faster results; returns np.ndarray
+        embeddings_np = self.model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
+        return [vec.tolist() for vec in embeddings_np]
+
+    def embed_query(self, text):
+        vec = self.model.encode([text], show_progress_bar=False, convert_to_numpy=True)
+        return vec[0].tolist()
+
+embeddings = SimpleEmbeddingWrapper(sbert)
+
+# Session state defaults
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = ChatMessageHistory()
-if 'conversational_rag_chain' not in st.session_state:
-    st.session_state.conversational_rag_chain = None
+if 'rag_chain' not in st.session_state:
+    st.session_state.rag_chain = None
+if 'processed_file_names' not in st.session_state:
+    st.session_state.processed_file_names = []
+if 'vectorstore_initialized' not in st.session_state:
+    st.session_state.vectorstore_initialized = False
 
-
-
-#  Sidebar for Controls 
+# Sidebar
 with st.sidebar:
-    st.header("Controls") 
-    if st.button("Clear Chat History"):
-        # Just create a new, empty history object for this user
+    st.header("Advanced Controls")
+    if st.button("Clear Memory & Re-process"):
         st.session_state.chat_history = ChatMessageHistory()
-        st.success("Chat history cleared!")
-            
+        st.session_state.rag_chain = None
+        st.session_state.processed_file_names = []
+        st.session_state.vectorstore_initialized = False
+        safe_rmtree("./chroma_db")
+        st.success("Memory wiped. Re-upload files to re-index.")
+        st.rerun()
+
     uploaded_files = st.file_uploader(
-        "Upload your documents (PDF, DOCX)",
-        type=["pdf", "docx"], 
+        "Upload Documents (PDF, DOCX, Images)",
+        type=["pdf", "docx", "png", "jpg", "jpeg"],
         accept_multiple_files=True
     )
-#  Main App Interface 
-st.title("🤖 NBT Chatbot")
-st.write("Your intelligent assistant for PDF content. Upload documents in the sidebar to begin.")
 
-#  API Key Check 
-if not groq_api_key:
-    st.warning("Groq API key not found. Please create a .env file and add GROQ_API_KEY='your_key'")
-    st.stop()
+# Title
+st.title("🤖 NBT Advanced RAG Chatbot")
 
-#  PDF Processing and RAG Chain Creation 
-if uploaded_files:
-    with st.spinner("Processing documents... This may take a moment."):
-        documents = []
-        temp_dir = "temp_pdf_files"
-        os.makedirs(temp_dir, exist_ok=True)
+
+# === LLM Initialization (prefer Groq hosted API if key present) ===
+llm = None
+if groq_api_key:
+    try:
+        llm = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0)
         
-        for uploaded_file in uploaded_files:
-            temp_path = os.path.join(temp_dir, uploaded_file.name)
-            with open(temp_path, "wb") as f:
-                f.write(uploaded_file.getvalue())
+    except Exception as e:
+        st.error(f"Failed to initialize ChatGroq: {e}")
+        llm = None
+else:
+    st.info("No GROQ_API_KEY provided. LLM responses will not be generated until you configure an LLM (Groq or local).")
 
-            loader = None
-            file_name_lower = uploaded_file.name.lower()
+# === Ingestion & indexing (only when uploads change) ===
+current_file_names = sorted([f.name for f in uploaded_files]) if uploaded_files else []
 
-            if file_name_lower.endswith(".pdf"):
-                loader = PyPDFLoader(temp_path)
-            elif file_name_lower.endswith(".docx"):
-                loader = Docx2txtLoader(temp_path)
-            
-            else:
-                st.warning(f"Skipping unsupported file: {uploaded_file.name}")
+if uploaded_files and st.session_state.processed_file_names != current_file_names:
+    temp_dir = "temp_files"
+    safe_rmtree(temp_dir)
+    os.makedirs(temp_dir, exist_ok=True)
 
-            if loader:
+    with st.spinner("Parsing & indexing files..."):
+        try:
+            # Initialize parser (LlamaParse)
+            parser = LlamaParse(
+                api_key=llama_api_key,
+                result_type="markdown",
+                verbose=False,
+                language="en"
+            )
+
+            parent_docs = []
+            for uploaded_file in uploaded_files:
+                temp_path = os.path.join(temp_dir, uploaded_file.name)
+                with open(temp_path, "wb") as f:
+                    f.write(uploaded_file.getvalue())
+
+                st.write(f"Parsing **{uploaded_file.name}**...")
                 try:
-                    # .load() returns a list of Documents
-                    documents.extend(loader.load()) 
-                except Exception as e:
-                    # Catch errors (e.g., Tesseract not found)
-                    st.error(f"Error loading {uploaded_file.name}: {e}")
-            
-            os.remove(temp_path) 
-
-        if not documents:
-            st.error("No valid documents were processed. Please check your files or Tesseract installation.")
-            st.stop()
-            
-            
-        # --- This block now only appears ONCE ---
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=500)
-        splits = text_splitter.split_documents(documents)
-        vectorstore = Chroma.from_documents(documents=splits, embedding=embeddings)
-        retriever = vectorstore.as_retriever()
-
-        llm = ChatGroq(groq_api_key=groq_api_key, model_name="llama-3.1-8b-instant")
-
-        # Contextualization prompt
-        contextualize_q_system_prompt = (
-            "Given a chat history and the latest user question "
-            "which might reference context in the chat history, "
-            "formulate a standalone question which can be understood "
-            "without the chat history. Do NOT answer the question, "
-            "just reformulate it if needed and otherwise return it as is."
-        )
-        contextualize_q_prompt = ChatPromptTemplate.from_messages([
-            ("system", contextualize_q_system_prompt),
-            MessagesPlaceholder("chat_history"),
-            ("human", "{input}"),
-        ])
-        history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
-
-        # Answering prompt
-        # Answering prompt
-        system_prompt = (
-            "You are NBT Chatbot, an assistant that answers questions **ONLY** based on the provided documents. "
-            "Your task is to use **ONLY** the following pieces of retrieved context to answer the user's question. "
-            "**DO NOT** use any external knowledge or make up information. "
-            "If the answer **cannot** be found in the provided context, you **MUST** say: "
-            "'I'm sorry, I couldn't find that information in the provided documents.' "
-            "Keep the answer concise.\n\n"
-            "Here is the context:\n{context}"
-        )
-
-        qa_prompt = ChatPromptTemplate.from_messages([
-    ("system", system_prompt),
-    MessagesPlaceholder("chat_history"),
-    ("human", "{input}"),
-])
-        question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
-        rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
-
-        def get_session_history(session_id: str) -> BaseChatMessageHistory:
-            # We ignore the session_id and just return this user's unique history
-         return st.session_state.chat_history
-
-        st.session_state.conversational_rag_chain = RunnableWithMessageHistory(
-            rag_chain,
-            get_session_history,
-            input_messages_key="input",
-            history_messages_key="chat_history",
-            output_messages_key="answer",
-        )
-        
-    #  Only ONE success message at the end 
-    st.success("Documents processed successfully! You can now ask questions.")
-
-
-# Display chat messages from history
-# Display chat messages from history
-for message in st.session_state.chat_history.messages:
-    with st.chat_message(message.type):
-      st.markdown(message.content)
-
-# Accept user input
-if user_input := st.chat_input("Ask a question about your document..."):
-    with st.chat_message("human"):
-        st.markdown(user_input)
-
-    if st.session_state.conversational_rag_chain is None:
-        st.warning("Please upload and process at least one PDF to begin.")
-    else:
-        # --- This is the BLOCK where 'response' is defined ---
-        with st.spinner("NBT Chatbot is thinking..."):
-            response = st.session_state.conversational_rag_chain.invoke(
- {"input": user_input},
-                # This can be any string, it's just a placeholder now
-                 config={"configurable": {"session_id": "user_session"}}, 
-)
-            
-            with st.chat_message("ai"):
-                st.markdown(response['answer'])
-                autoplay_audio(r"new-notification-3-398649.mp3") 
-
-                source_documents = response.get('context', [])
-            # --- START: REPLACEMENT BLOCK FOR SOURCES ---
-
-            # You are missing these two lines:
-            answer = response.get('answer', '')
-            fallback_message = "I'm sorry, I couldn't find that information in the provided documents."
-            
-            # You already have this line:
-            source_documents = response.get('context', [])
-
-            # This 'if' statement will now work:
-            if source_documents and fallback_message not in answer:
-                unique_sources = set()
-                
-                for doc in source_documents:
-                    source_name = os.path.basename(doc.metadata.get('source', 'Unknown'))
-                    
-                    if source_name.lower().endswith((".pdf",".docx")):
-                        page_num = doc.metadata.get('page', -1)
-                        if page_num != -1:
-                            unique_sources.add(f"{source_name} (Page: {page_num + 1})")
-                        else:
-                            unique_sources.add(source_name)
+                    maybe = parser.load_data(temp_path)
+                    if asyncio.iscoroutine(maybe):
+                        st.write("Awaiting async parser.load_data(...)")
+                        llama_docs = asyncio.get_event_loop().run_until_complete(maybe)
                     else:
-                        unique_sources.add(source_name)
-                
-                if unique_sources:
-                    with st.expander("View Sources"):
-                        for source_info in sorted(list(unique_sources)):
-                            st.write(f"📄 **{source_info}**")
-            # --- END: REPLACEMENT BLOCK FOR SOURCES ---
-                    
+                        llama_docs = maybe
+
+                    if not llama_docs:
+                        st.warning(f"No parsed pages for {uploaded_file.name}.")
+                        llama_docs = []
+
+                    for idx, doc in enumerate(llama_docs):
+                        text = getattr(doc, "text", None) or getattr(doc, "content", None) or ""
+                        metadata = getattr(doc, "metadata", {}) or {}
+                        page_label = metadata.get("page_label", idx + 1)
+                        src_name = os.path.basename(uploaded_file.name)
+
+                        lc_doc = Document(
+                            page_content=text,
+                            metadata={**metadata, "source": src_name, "page": page_label}
+                        )
+                        unique_id = f"{src_name}_p{page_label}"
+                        lc_doc.metadata["doc_id"] = unique_id
+                        parent_docs.append(lc_doc)
+
+                except Exception as e_doc:
+                    st.error(f"Failed to parse {uploaded_file.name}: {e_doc}")
+                    with open("parse_errors.log", "a") as logf:
+                        logf.write(f"Error parsing {uploaded_file.name}:\n{traceback.format_exc()}\n\n")
+
+            if not parent_docs:
+                st.warning("No parseable content found.")
+            else:
+                # persistent Chroma
+                vectorstore = Chroma(
+                    collection_name="advanced_rag",
+                    persist_directory="./chroma_db",
+                    embedding_function=embeddings,  # our wrapper provides embed_documents & embed_query
+                )
+
+                # metadata store
+                store = InMemoryStore()
+                child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+
+                retriever = ParentDocumentRetriever(
+                    vectorstore=vectorstore,
+                    docstore=store,
+                    child_splitter=child_splitter,
+                    id_key="doc_id",
+                )
+
+                # add parent docs and explicit ids
+                doc_ids = [doc.metadata["doc_id"] for doc in parent_docs]
+                retriever.add_documents(parent_docs, ids=doc_ids)
+
+                # Persist Chroma (if supported)
+                try:
+                    vectorstore.persist()
+                except Exception:
+                    pass
+
+                # Build LLM chain (LangChain)
+                if llm is None:
+                    st.warning("No LLM configured — answers cannot be generated until an LLM is available (set GROQ_API_KEY).")
+                system_prompt = (
+                    "You are a strictly constrained document assistant. "
+                    "Answer the user's question ONLY using the provided context below. "
+                    "DO NOT use any prior knowledge or external information. "
+                    "If the answer is not EXPLICITLY in the provided context, reply exactly: "
+                    "'Based on the documents provided, I cannot answer this question.'\n\n"
+                    "Context:\n{context}"
+                )
+
+                qa_prompt = ChatPromptTemplate.from_messages([
+                    ("system", system_prompt),
+                    MessagesPlaceholder("chat_history"),
+                    ("human", "{input}"),
+                ])
+
+                history_retriever = create_history_aware_retriever(
+                    llm, retriever, ChatPromptTemplate.from_messages([
+                        ("system", "Rephrase the user question to be standalone, referencing chat history if needed."),
+                        MessagesPlaceholder("chat_history"),
+                        ("human", "{input}"),
+                    ])
+                )
+
+                rag_chain = create_retrieval_chain(history_retriever, create_stuff_documents_chain(llm, qa_prompt))
+
+                st.session_state.rag_chain = RunnableWithMessageHistory(
+                    rag_chain,
+                    lambda session_id: st.session_state.chat_history,
+                    input_messages_key="input",
+                    history_messages_key="chat_history",
+                    output_messages_key="answer",
+                )
+
+                st.session_state.processed_file_names = current_file_names
+                st.session_state.vectorstore_initialized = True
+                st.success(f"Indexed {len(parent_docs)} pages from {len(current_file_names)} files.")
+
+        except Exception as e:
+            st.error(f"Indexing failed: {e}")
+            with open("parse_errors.log", "a") as logf:
+                logf.write(f"Indexing pipeline exception:\n{traceback.format_exc()}\n\n")
+        finally:
+            safe_rmtree(temp_dir)
+
+    # refresh UI after indexing
+    st.rerun()
+
+# --- Show existing chat history ---
+for msg in st.session_state.chat_history.messages:
+    st.chat_message(msg.type).write(msg.content)
+
+# --- Chat input and answering ---
+if user_input := st.chat_input("Ask about your documents..."):
+    st.chat_message("human").write(user_input)
+
+    identity_triggers = ["who are you", "about yourself", "what are you", "your identity", "what do you do"]
+    is_identity_question = any(trigger in user_input.lower() for trigger in identity_triggers)
+
+    if st.session_state.rag_chain and st.session_state.vectorstore_initialized:
+        with st.spinner("Thinking..."):
+            try:
+                response = st.session_state.rag_chain.invoke(
+                    {"input": user_input},
+                    config={"configurable": {"session_id": "default"}}
+                )
+
+                if isinstance(response, dict):
+                    answer_text = response.get("answer") or "Based on the documents provided, I cannot answer this question."
+                    raw_context = response.get("context")
+                else:
+                    answer_text = str(response) or "Based on the documents provided, I cannot answer this question."
+                    raw_context = None
+
+                st.chat_message("ai").write(answer_text)
+                try:
+                    st.session_state.chat_history.add_user_message(user_input)
+                    st.session_state.chat_history.add_ai_message(answer_text)
+                except Exception:
+                    pass
+
+                # show sources defensively
+                sources = set()
+                if raw_context:
+                    for d in raw_context:
+                        try:
+                            md = getattr(d, "metadata", {}) if d else {}
+                            src = md.get("source") or md.get("filename")
+                            page = md.get("page") or md.get("page_label")
+                            if src:
+                                sources.add(f"{src} (Page {page})" if page else f"{src}")
+                        except Exception:
+                            continue
+                if sources:
+                    with st.expander("Sources Used"):
+                        for s in sorted(sources):
+                            st.write(f"📄 {s}")
+
+                if os.path.exists("notification.mp3"):
+                    autoplay_audio("notification.mp3")
+
+            except Exception as e:
+                st.error(f"Query error: {e}")
+                with open("parse_errors.log", "a") as logf:
+                    logf.write(f"Query error:\n{traceback.format_exc()}\n\n")
+
+    elif is_identity_question:
+        ai_response = "I am NBT CHATBOT. I answer questions using uploaded documents."
+        st.chat_message("ai").write(ai_response)
+        try:
+            st.session_state.chat_history.add_user_message(user_input)
+            st.session_state.chat_history.add_ai_message(ai_response)
+        except Exception:
+            pass
+    else:
+        st.warning("Please upload documents first and wait for indexing to finish so I can answer.")
