@@ -260,13 +260,21 @@ if uploaded_files and st.session_state.processed_file_names != current_file_name
                 # Build LLM chain (LangChain)
                 if llm is None:
                     st.warning("No LLM configured — answers cannot be generated until an LLM is available (set GROQ_API_KEY).")
+                # --- NEW, "LESS STRICT" PROMPT ---
                 system_prompt = (
-                    "You are a strictly constrained document assistant. "
-                    "Answer the user's question ONLY using the provided context below. "
-                    "DO NOT use any prior knowledge or external information. "
-                    "If the answer is not EXPLICITLY in the provided context, reply exactly: "
-                    "'Based on the documents provided, I cannot answer this question.'\n\n"
-                    "Context:\n{context}"
+    "You are a helpful and conversational document assistant. "
+    "Your goal is to answer the user's question using the provided context. "
+    "Read the context carefully and find the most relevant information to form a helpful answer. "
+    
+    # This line encourages it to answer, even if it's not a perfect 1-to-1 match
+    "Do your best to answer the user's question, even if the query is conversational "
+    "or not a perfect match for the text. "
+    
+    # This gives it a "polite way out" instead of a hard failure
+    "If the context is completely unrelated or does not contain the answer, "
+    "just say: 'I've checked the documents, but I can't find a clear answer to that specific question.'\n\n"
+    
+    "Here is the context:\n{context}"
                 )
 
                 qa_prompt = ChatPromptTemplate.from_messages([
