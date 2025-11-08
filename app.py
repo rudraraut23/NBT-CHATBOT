@@ -144,7 +144,7 @@ with st.sidebar:
         st.session_state.rag_chain = None
         st.session_state.processed_file_names = []
         st.session_state.vectorstore_initialized = False
-        safe_rmtree("./chroma_db")
+        
         st.success("Memory wiped. Re-upload files to re-index.")
         st.rerun()
 
@@ -232,7 +232,7 @@ if uploaded_files and st.session_state.processed_file_names != current_file_name
                 # persistent Chroma
                 vectorstore = Chroma(
                     collection_name="advanced_rag",
-                    persist_directory="./chroma_db",
+                    
                     embedding_function=embeddings,  # our wrapper provides embed_documents & embed_query
                 )
 
@@ -252,10 +252,7 @@ if uploaded_files and st.session_state.processed_file_names != current_file_name
                 retriever.add_documents(parent_docs, ids=doc_ids)
 
                 # Persist Chroma (if supported)
-                try:
-                    vectorstore.persist()
-                except Exception:
-                    pass
+                
 
                 # Build LLM chain (LangChain)
                 if llm is None:
