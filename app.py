@@ -1,285 +1,491 @@
 # streamlit_app.py
+"""
+Optimized Streamlit RAG app for CA / Lawyer workflows.
+
+Fixes:
+- Removed invalid `continue` uses (top-level, outside loops).
+- Uses handled flag / if/else for control flow in chat handler.
+- Fast PDF parsing (PyMuPDF), optional OCR, SBERT embeddings, Chroma->FAISS fallback.
+- Progress bars and MD5 skip-reindex logic.
+"""
+
 import os
-import shutil
-import base64
-import asyncio
-import traceback
+import io
+import time
 import json
-from concurrent.futures import ThreadPoolExecutor
-from collections import defaultdict
+import hashlib
+import shutil
+import traceback
+from multiprocessing import cpu_count
+from typing import List, Tuple, Sequence, Any, Callable
 
 import streamlit as st
 from dotenv import load_dotenv
 import nest_asyncio
 
-# LangChain / model imports (match your environment)
-from langchain.chains import create_history_aware_retriever, create_retrieval_chain
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_chroma import Chroma
-from langchain_community.chat_message_histories import ChatMessageHistory
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables.history import RunnableWithMessageHistory
-from langchain_core.documents import Document
-from langchain.retrievers import ParentDocumentRetriever
-from langchain_groq import ChatGroq
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain.storage import InMemoryStore
+# optional libraries
+try:
+    import fitz  # PyMuPDF
+except Exception:
+    fitz = None
 
-# LlamaParse (may be async or sync depending on version)
-from llama_parse import LlamaParse
+try:
+    import pytesseract
+    from PIL import Image
+except Exception:
+    pytesseract = None
+    Image = None
 
-# For safe SBERT usage:
+# sentence-transformers
 try:
     from sentence_transformers import SentenceTransformer
 except Exception:
-    SentenceTransformer = None  # handled later
+    SentenceTransformer = None
 
-# allow asyncio.run inside Streamlit
+# langchain pieces
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain.chains import create_history_aware_retriever, create_retrieval_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_community.chat_message_histories import ChatMessageHistory
+
+# attempt chroma then fallback to FAISS
+try:
+    from langchain_chroma import Chroma
+    CHROMA_AVAILABLE = True
+except Exception:
+    CHROMA_AVAILABLE = False
+
+try:
+    from langchain.vectorstores import FAISS
+    FAISS_AVAILABLE = True
+except Exception:
+    FAISS_AVAILABLE = False
+
+from llama_parse import LlamaParse
+from langchain_groq import ChatGroq
+
 nest_asyncio.apply()
 
-# Streamlit rerun compatibility (old/new versions)
-if not hasattr(st, "rerun") and hasattr(st, "experimental_rerun"):
-    st.rerun = st.experimental_rerun
+# ---------- Config ----------
+UPLOADS_DIR = "uploaded_uploads"
+TEMP_DIR = "tmp_parse"
+HASH_STORE = "indexed_hashes.json"
+FAISS_DIR = "faiss_index"
+CHROMA_COLLECTION = "advanced_rag"
 
-# Page config
-st.set_page_config(page_title="NBT Advanced CHATBOT", page_icon="🤖", layout="wide")
-st.markdown("<style>.main{background-color:#f7f9fc;}</style>", unsafe_allow_html=True)
+WORKERS = max(1, cpu_count() - 1)
+CHUNK_SIZE_DEFAULT = 800
+CHUNK_OVERLAP_DEFAULT = 200
+EMBED_BATCH_SIZE = 128
+MIN_TEXT_LEN = 30
+RETRIEVE_K_DEFAULT = 5
 
-# Helpers
-# --- CORRECTED FUNCTION ---
-# --- FULLY CORRECTED FUNCTION ---
-def autoplay_audio(file_path: str):
-    """
-    Plays an audio file from a path by encoding it in base64.
-    """
-    # FIX: This now correctly checks the 'file_path' variable 
-    # (e.g., "notification.mp3")
-    if os.path.exists(file_path):
-        try:
-            # This correctly opens the 'file_path' in binary mode
-            with open(file_path, "rb") as f:
-                data = f.read()
-            
-            b64 = base64.b64encode(data).decode()
-            md = f'<audio controls autoplay="true" style="display:none;"><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>'
-            st.markdown(md, unsafe_allow_html=True)
-        
-        except Exception as e:
-            st.warning(f"Error playing audio {file_path}: {e}")
-    else:
-        # This 'else' block now works correctly.
-        st.warning(f"Audio file not found at: {file_path}")
+DEFAULT_MODEL_NAME = "llama-3.1-8b-instant"
+LLM_TEMPERATURE = 0.0
+
+# ---------- Utilities ----------
+def ensure_dirs():
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    os.makedirs(TEMP_DIR, exist_ok=True)
+    os.makedirs(FAISS_DIR, exist_ok=True)
 
 def safe_rmtree(path):
     if os.path.exists(path):
         try:
-            shutil.rmtree(path, ignore_errors=True)         
+            shutil.rmtree(path, ignore_errors=True)
         except Exception:
             pass
 
-# Async thread executor helpers
-executor = ThreadPoolExecutor(max_workers=4)
-async def run_blocking(fn, *args, **kwargs):
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(executor, lambda: fn(*args, **kwargs))
+def md5_bytes(b: bytes) -> str:
+    m = hashlib.md5()
+    m.update(b)
+    return m.hexdigest()
 
-# Robust loader for parser.load_data that supports both sync and async variants
-async def robust_load_data(parser, path):
-    maybe = parser.load_data(path)
-    if asyncio.iscoroutine(maybe):
-        return asyncio.get_event_loop().run_until_complete(maybe)
-    return maybe
+def load_indexed_hashes() -> dict:
+    try:
+        with open(HASH_STORE, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
-# Load .env
+def save_indexed_hashes(d: dict):
+    with open(HASH_STORE, "w") as f:
+        json.dump(d, f)
+
+# ---------- Parsing helpers ----------
+def extract_pdf_pages(path: str) -> List[Tuple[int, str]]:
+    res = []
+    if fitz is None:
+        return res
+    try:
+        doc = fitz.open(path)
+        for i in range(len(doc)):
+            try:
+                page = doc.load_page(i)
+                txt = page.get_text("text") or ""
+            except Exception:
+                txt = ""
+            res.append((i + 1, txt))
+        doc.close()
+    except Exception:
+        pass
+    return res
+
+def ocr_image_to_text(path: str) -> str:
+    if pytesseract is None or Image is None:
+        return ""
+    try:
+        img = Image.open(path)
+        txt = pytesseract.image_to_string(img)
+        return txt
+    except Exception:
+        return ""
+
+def parse_file(path: str, filename: str, llama_api_key: str) -> List[Document]:
+    docs = []
+    lower = filename.lower()
+    if lower.endswith(".pdf") and fitz is not None:
+        pages = extract_pdf_pages(path)
+        for pnum, text in pages:
+            if text and len(text.strip()) >= MIN_TEXT_LEN:
+                meta = {"source": filename, "page": pnum}
+                docs.append(Document(page_content=text, metadata=meta))
+        return docs
+
+    if lower.endswith((".png", ".jpg", ".jpeg")):
+        txt = ocr_image_to_text(path)
+        if txt and len(txt.strip()) >= MIN_TEXT_LEN:
+            meta = {"source": filename, "page": 1}
+            docs.append(Document(page_content=txt, metadata=meta))
+            return docs
+
+    # fallback to LlamaParse for docx or other types
+    try:
+        parser = LlamaParse(api_key=llama_api_key, result_type="markdown", verbose=False, language="en")
+        maybe = parser.load_data(path)
+        if hasattr(maybe, "__iter__"):
+            for idx, o in enumerate(maybe):
+                text = getattr(o, "text", None) or getattr(o, "content", None) or ""
+                if text and len(text.strip()) >= MIN_TEXT_LEN:
+                    meta = getattr(o, "metadata", {}) or {}
+                    page_lbl = meta.get("page_label", idx + 1)
+                    meta_out = {"source": filename, "page": page_lbl, **meta}
+                    docs.append(Document(page_content=text, metadata=meta_out))
+    except Exception:
+        pass
+    return docs
+
+# ---------- Embedding wrapper ----------
+class SimpleEmbeddings:
+    def __init__(self, model):
+        self.model = model
+    def embed_documents(self, texts: Sequence[str]) -> List[List[float]]:
+        arr = self.model.encode(list(texts), show_progress_bar=False, convert_to_numpy=True, batch_size=EMBED_BATCH_SIZE)
+        return [a.tolist() for a in arr]
+    def embed_query(self, text: str) -> List[float]:
+        arr = self.model.encode([text], show_progress_bar=False, convert_to_numpy=True)
+        return arr[0].tolist()
+
+# ---------- Vectorstore helpers ----------
+def init_vectorstore_chroma(embeddings):
+    if not CHROMA_AVAILABLE:
+        raise RuntimeError("Chroma is not available")
+    vs = Chroma(collection_name=CHROMA_COLLECTION, embedding_function=embeddings)
+    return vs
+
+def init_vectorstore_faiss_from_texts(texts, metas, embeddings):
+    if not FAISS_AVAILABLE:
+        raise RuntimeError("FAISS not available")
+    return FAISS.from_texts(texts, embeddings, metadatas=metas)
+
+# ---------- App UI & Flow ----------
 load_dotenv()
+ensure_dirs()
+
+st.set_page_config(page_title="NBT Advanced RAG (Optimized)", page_icon="🤖", layout="wide")
+st.markdown("<style>.main{background-color:#f7f9fc;}</style>", unsafe_allow_html=True)
+
+# Keys
 groq_api_key = os.getenv("GROQ_API_KEY")
 llama_api_key = os.getenv("LLAMA_CLOUD_API_KEY")
 
-# Warn if keys missing
-if not groq_api_key:
-    st.warning("GROQ_API_KEY not found in .env. If you want hosted LLM answers use Groq. You can still parse/index documents.")
-
-# --- SAFE embeddings initialization using sentence-transformers on CPU ---
-if SentenceTransformer is None:
-    st.error("Module 'sentence_transformers' not installed. Install with: pip install sentence-transformers")
-    raise SystemExit("Install sentence-transformers and restart.")
-
-# Load SBERT on CPU explicitly to avoid meta-tensor device moves
-sbert = SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
-
-class SimpleEmbeddingWrapper:
-    """
-    Minimal wrapper exposing embed_documents(texts) and embed_query(text).
-    Returns python lists of floats (suitable for most vector stores).
-    """
-    def __init__(self, model):
-        self.model = model
-
-    def embed_documents(self, texts):
-        # convert_to_numpy=True for faster results; returns np.ndarray
-        embeddings_np = self.model.encode(texts, show_progress_bar=False, convert_to_numpy=True)
-        return [vec.tolist() for vec in embeddings_np]
-
-    def embed_query(self, text):
-        vec = self.model.encode([text], show_progress_bar=False, convert_to_numpy=True)
-        return vec[0].tolist()
-
-embeddings = SimpleEmbeddingWrapper(sbert)
-
-# Session state defaults
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = ChatMessageHistory()
-if 'rag_chain' not in st.session_state:
-    st.session_state.rag_chain = None
-if 'processed_file_names' not in st.session_state:
-    st.session_state.processed_file_names = []
-if 'vectorstore_initialized' not in st.session_state:
-    st.session_state.vectorstore_initialized = False
-
-# Sidebar
+# Sidebar controls
 with st.sidebar:
-    st.header("Advanced Controls")
-    if st.button("Clear Memory & Re-process"):
-        st.session_state.chat_history = ChatMessageHistory()
-        st.session_state.rag_chain = None
+    st.header("Controls — Optimized RAG")
+    st.markdown("Tune chunking/retrieval for legal/CA docs.")
+    CHUNK_SIZE = st.number_input("Chunk size (chars)", value=CHUNK_SIZE_DEFAULT, min_value=200, max_value=2000, step=100)
+    CHUNK_OVERLAP = st.number_input("Chunk overlap (chars)", value=CHUNK_OVERLAP_DEFAULT, min_value=0, max_value=1000, step=25)
+    RETRIEVE_K = st.number_input("Top-K retrieve", value=RETRIEVE_K_DEFAULT, min_value=1, max_value=20, step=1)
+    if st.button("Clear indexed metadata & reprocess"):
+        if os.path.exists(HASH_STORE):
+            os.remove(HASH_STORE)
+        safe_rmtree(FAISS_DIR)
         st.session_state.processed_file_names = []
-        st.session_state.vectorstore_initialized = False
-        
-        st.success("Memory wiped. Re-upload files to re-index.")
+        st.session_state.rag_chain = None
+        st.session_state.vectorstore = None
+        st.success("Cleared indexing metadata.")
         st.rerun()
 
-    uploaded_files = st.file_uploader(
-        "Upload Documents (PDF, DOCX, Images)",
-        type=["pdf", "docx", "png", "jpg", "jpeg"],
-        accept_multiple_files=True
-    )
+uploaded_files = st.file_uploader("Upload Documents (PDF, DOCX, Images)", accept_multiple_files=True,
+                                  type=["pdf", "docx", "png", "jpg", "jpeg"])
 
-# Title
-st.title("🤖 NBT Advanced RAG Chatbot")
+if SentenceTransformer is None:
+    st.error("Install sentence-transformers to enable embeddings: pip install sentence-transformers")
+    st.stop()
 
+# initialize SBERT
+import torch
+use_cuda = torch.cuda.is_available()
+device = "cuda" if use_cuda else "cpu"
+if use_cuda:
+    st.info("GPU available — embeddings will run on GPU.")
+else:
+    st.info("Embeddings on CPU.")
 
-# === LLM Initialization (prefer Groq hosted API if key present) ===
+sbert_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
+embeddings_wrapper = SimpleEmbeddings(sbert_model)
+
+# session defaults
+if 'processed_file_names' not in st.session_state:
+    st.session_state.processed_file_names = []
+if 'vectorstore' not in st.session_state:
+    st.session_state.vectorstore = None
+if 'rag_chain' not in st.session_state:
+    st.session_state.rag_chain = None
+if 'file_hashes' not in st.session_state:
+    st.session_state.file_hashes = load_indexed_hashes()
+if 'file_paths' not in st.session_state:
+    st.session_state.file_paths = {}
+
+st.title("🤖 NBT Advanced RAG Chatbot (Optimized)")
+
+# Initialize LLM (Groq) if available
 llm = None
 if groq_api_key:
     try:
-        llm = ChatGroq(model_name="llama-3.1-8b-instant", temperature=0)
-        
-    except Exception as e:
-        st.error(f"Failed to initialize ChatGroq: {e}")
-        llm = None
-else:
-    st.info("No GROQ_API_KEY provided. LLM responses will not be generated until you configure an LLM (Groq or local).")
+        llm = ChatGroq(model_name=DEFAULT_MODEL_NAME, temperature=LLM_TEMPERATURE)
+    except Exception:
+        st.warning("Could not initialize Groq LLM; continue with indexing only.")
 
-# === Ingestion & indexing (only when uploads change) ===
-current_file_names = sorted([f.name for f in uploaded_files]) if uploaded_files else []
+# Indexing when uploads changed
+current_names = sorted([f.name for f in uploaded_files]) if uploaded_files else []
+if uploaded_files and st.session_state.processed_file_names != current_names:
+    # persist uploads, compute MD5 and decide which to process
+    ensure_dirs()
+    to_process = []
+    for uf in uploaded_files:
+        content = uf.getvalue()
+        h = md5_bytes(content)
+        dest = os.path.join(UPLOADS_DIR, uf.name)
+        with open(dest, "wb") as wf:
+            wf.write(content)
+        st.session_state.file_paths[uf.name] = dest
+        prev_h = st.session_state.file_hashes.get(uf.name)
+        if prev_h == h and st.session_state.vectorstore is not None:
+            st.info(f"Skipping unchanged file: {uf.name}")
+            continue
+        to_process.append((uf.name, dest, h))
 
-if uploaded_files and st.session_state.processed_file_names != current_file_names:
-    temp_dir = "temp_files"
-    safe_rmtree(temp_dir)
-    os.makedirs(temp_dir, exist_ok=True)
+    if not to_process:
+        st.success("No new/changed files to index.")
+        st.session_state.processed_file_names = current_names
+    else:
+        # parse sequentially for visible progress
+        parse_bar = st.progress(0)
+        parsed_docs = []
+        total = len(to_process)
+        i = 0
+        for name, path, h in to_process:
+            st.write(f"Parsing {name} ...")
+            docs = parse_file(path, name, llama_api_key)
+            parsed_docs.extend(docs)
+            i += 1
+            parse_bar.progress(i / total)
+        parse_bar.empty()
 
-    with st.spinner("Parsing & indexing files..."):
+        if not parsed_docs:
+            st.warning("No parseable content found.")
+        else:
+            st.info(f"Parsed {len(parsed_docs)} parent pages. Chunking...")
+
+            splitter = RecursiveCharacterTextSplitter(chunk_size=int(CHUNK_SIZE), chunk_overlap=int(CHUNK_OVERLAP))
+            child_docs = []
+            total_parents = len(parsed_docs)
+            p = 0
+            chunk_bar = st.progress(0)
+            for doc in parsed_docs:
+                chunks = splitter.split_documents([doc])
+                for c in chunks:
+                    text = c.page_content or ""
+                    if len(text.strip()) < MIN_TEXT_LEN:
+                        continue
+                    meta = c.metadata or {}
+                    src = meta.get("source", doc.metadata.get("source"))
+                    page = meta.get("page", doc.metadata.get("page"))
+                    chunk_id = f"{src}_p{page}_{hashlib.md5(text.encode()).hexdigest()[:8]}"
+                    c.metadata = {"source": src, "page": page, "chunk_id": chunk_id}
+                    child_docs.append(c)
+                p += 1
+                chunk_bar.progress(p / total_parents)
+            chunk_bar.empty()
+
+            st.info(f"Created {len(child_docs)} chunks. Embedding & indexing...")
+
+            texts = [c.page_content for c in child_docs]
+            metadatas = [c.metadata for c in child_docs]
+
+            # embedding & vectorstore init
+            def embed_and_index():
+                try:
+                    if CHROMA_AVAILABLE:
+                        st.info("Initializing Chroma local vectorstore.")
+                        vs = init_vectorstore_chroma(embeddings_wrapper)
+                        # add texts (some wrappers provide add_texts)
+                        try:
+                            vs.add_texts(texts, metadatas=metadatas)
+                        except Exception:
+                            # fallback: try from_texts
+                            try:
+                                vs = init_vectorstore_chroma(embeddings_wrapper)
+                                vs.from_texts(texts, embeddings_wrapper, metadatas=metadatas)
+                            except Exception:
+                                raise
+                        return ("chroma", vs)
+                    else:
+                        raise RuntimeError("Chroma not available")
+                except Exception as exc_chroma:
+                    st.warning(f"Chroma init failed — falling back to FAISS: {exc_chroma}")
+                    try:
+                        if not FAISS_AVAILABLE:
+                            raise RuntimeError("FAISS not available")
+                        vs = init_vectorstore_faiss_from_texts(texts, metadatas, embeddings_wrapper)
+                        try:
+                            vs.save_local(FAISS_DIR)
+                        except Exception:
+                            pass
+                        return ("faiss", vs)
+                    except Exception as exc_faiss:
+                        st.error(f"Failed to init vectorstore: {exc_faiss}")
+                        raise
+
+            try:
+                kind, vectorstore = embed_and_index()
+                st.session_state.vectorstore = vectorstore
+                st.session_state.vectorstore_kind = kind
+                for name, path, h in to_process:
+                    st.session_state.file_hashes[name] = h
+                save_indexed_hashes(st.session_state.file_hashes)
+                st.success(f"Indexing complete ({kind}).")
+            except Exception:
+                st.error("Indexing failed, check parse_errors.log")
+                with open("parse_errors.log", "a") as lf:
+                    lf.write(traceback.format_exc())
+
+    st.session_state.processed_file_names = current_names
+    time.sleep(0.2)
+    st.rerun()
+
+# show chat history
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = ChatMessageHistory()
+for msg in st.session_state.chat_history.messages:
+    st.chat_message(msg.type).write(msg.content)
+
+# chat input
+if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."):
+    st.chat_message("human").write(user_input)
+
+    # identity question
+    identity_triggers = ["who are you", "about yourself", "what are you", "your identity", "what do you do"]
+    is_identity = any(t in user_input.lower() for t in identity_triggers)
+    handled = False
+
+    if is_identity:
+        ai_resp = "I am NBT Advanced RAG — I answer questions using your uploaded documents (CA / legal friendly)."
+        st.chat_message("ai").write(ai_resp)
         try:
-            # Initialize parser (LlamaParse)
-            parser = LlamaParse(
-                api_key=llama_api_key,
-                result_type="markdown",
-                verbose=False,
-                language="en"
+            st.session_state.chat_history.add_user_message(user_input)
+            st.session_state.chat_history.add_ai_message(ai_resp)
+        except Exception:
+            pass
+        handled = True
+
+    # If not handled and no vectorstore -> warn
+    if not handled and st.session_state.vectorstore is None:
+        st.warning("Please upload and index documents first.")
+        handled = True
+
+    # If we already handled response (identity or no vectorstore), skip retrieval
+    if not handled:
+        # perform retrieval + RAG
+        vs = st.session_state.vectorstore
+        try:
+            if getattr(vs, "as_retriever", None):
+                retriever = vs.as_retriever(search_kwargs={"k": int(RETRIEVE_K)})
+            else:
+                retriever = vs.get_retriever(k=int(RETRIEVE_K))
+        except Exception:
+            class _SimpleRetriever:
+                def __init__(self, vs):
+                    self.vs = vs
+                def get_relevant_documents(self, query, k=RETRIEVE_K):
+                    try:
+                        return self.vs.similarity_search(query, k=k)
+                    except Exception:
+                        return []
+            retriever = _SimpleRetriever(vs)
+
+        with st.spinner("Retrieving relevant passages..."):
+            try:
+                docs = retriever.get_relevant_documents(user_input)
+            except Exception:
+                try:
+                    docs = vs.similarity_search(user_input, k=int(RETRIEVE_K))
+                except Exception:
+                    docs = []
+
+        if not docs:
+            ai_resp = "I've checked the documents, but I can't find a clear answer to that specific question."
+            st.chat_message("ai").write(ai_resp)
+            try:
+                st.session_state.chat_history.add_user_message(user_input)
+                st.session_state.chat_history.add_ai_message(ai_resp)
+            except Exception:
+                pass
+            # do not show pages
+        else:
+            context_pieces = []
+            for d in docs:
+                md = getattr(d, "metadata", {}) or {}
+                src = md.get("source") or md.get("filename") or "source"
+                page = md.get("page") or md.get("page_label") or ""
+                header = f"{src} (Page {page})" if page else src
+                snippet = (d.page_content or "").strip()
+                snippet_short = snippet[:1200] + (" …" if len(snippet) > 1200 else "")
+                context_pieces.append(f"---\nSource: {header}\n{snippet_short}")
+            full_context = "\n\n".join(context_pieces)
+
+            system_prompt = (
+                "You are a helpful document assistant specialized for legal / chartered-accountant documents. "
+                "Your first priority is to answer questions using the provided document context. "
+                "Cite the document sources and page numbers you used (in parentheses) after factual statements or quotes. "
+                "If the documents provide the answer, respond concisely and include source citations. "
+                "If the documents do not contain an answer, say: "
+                "'I've checked the documents, but I can't find a clear answer to that specific question.' "
+                "You may provide brief clarifications or next steps, but do NOT hallucinate facts not supported by the documents unless explicitly asked for background."
+                "\n\nContext:\n{context}"
             )
 
-            parent_docs = []
-            for uploaded_file in uploaded_files:
-                temp_path = os.path.join(temp_dir, uploaded_file.name)
-                with open(temp_path, "wb") as f:
-                    f.write(uploaded_file.getvalue())
+            qa_prompt = ChatPromptTemplate.from_messages([
+                ("system", system_prompt),
+                MessagesPlaceholder("chat_history"),
+                ("human", "{input}")
+            ])
 
-                st.write(f"Parsing **{uploaded_file.name}**...")
-                try:
-                    maybe = parser.load_data(temp_path)
-                    if asyncio.iscoroutine(maybe):
-                        st.write("Awaiting async parser.load_data(...)")
-                        llama_docs = asyncio.get_event_loop().run_until_complete(maybe)
-                    else:
-                        llama_docs = maybe
-
-                    if not llama_docs:
-                        st.warning(f"No parsed pages for {uploaded_file.name}.")
-                        llama_docs = []
-
-                    for idx, doc in enumerate(llama_docs):
-                        text = getattr(doc, "text", None) or getattr(doc, "content", None) or ""
-                        metadata = getattr(doc, "metadata", {}) or {}
-                        page_label = metadata.get("page_label", idx + 1)
-                        src_name = os.path.basename(uploaded_file.name)
-
-                        lc_doc = Document(
-                            page_content=text,
-                            metadata={**metadata, "source": src_name, "page": page_label}
-                        )
-                        unique_id = f"{src_name}_p{page_label}"
-                        lc_doc.metadata["doc_id"] = unique_id
-                        parent_docs.append(lc_doc)
-
-                except Exception as e_doc:
-                    st.error(f"Failed to parse {uploaded_file.name}: {e_doc}")
-                    with open("parse_errors.log", "a") as logf:
-                        logf.write(f"Error parsing {uploaded_file.name}:\n{traceback.format_exc()}\n\n")
-
-            if not parent_docs:
-                st.warning("No parseable content found.")
-            else:
-                # persistent Chroma
-                vectorstore = Chroma(
-                    collection_name="advanced_rag",
-                    
-                    embedding_function=embeddings,  # our wrapper provides embed_documents & embed_query
-                )
-
-                # metadata store
-                store = InMemoryStore()
-                child_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-
-                retriever = ParentDocumentRetriever(
-                    vectorstore=vectorstore,
-                    docstore=store,
-                    child_splitter=child_splitter,
-                    id_key="doc_id",
-                )
-
-                # add parent docs and explicit ids
-                doc_ids = [doc.metadata["doc_id"] for doc in parent_docs]
-                retriever.add_documents(parent_docs, ids=doc_ids)
-
-                # Persist Chroma (if supported)
-                
-
-                # Build LLM chain (LangChain)
-                if llm is None:
-                    st.warning("No LLM configured — answers cannot be generated until an LLM is available (set GROQ_API_KEY).")
-                # --- NEW, "LESS STRICT" PROMPT ---
-                system_prompt = (
-    "You are a helpful and conversational document assistant. "
-    "Your goal is to answer the user's question using the provided context. "
-    "Read the context carefully and find the most relevant information to form a helpful answer. "
-    
-    # This line encourages it to answer, even if it's not a perfect 1-to-1 match
-    "Do your best to answer the user's question, even if the query is conversational "
-    "or not a perfect match for the text. "
-    
-    # This gives it a "polite way out" instead of a hard failure
-    "If the context is completely unrelated or does not contain the answer, "
-    "just say: 'I've checked the documents, but I can't find a clear answer to that specific question.'\n\n"
-    
-    "Here is the context:\n{context}"
-                )
-
-                qa_prompt = ChatPromptTemplate.from_messages([
-                    ("system", system_prompt),
-                    MessagesPlaceholder("chat_history"),
-                    ("human", "{input}"),
-                ])
-
+            try:
                 history_retriever = create_history_aware_retriever(
                     llm, retriever, ChatPromptTemplate.from_messages([
                         ("system", "Rephrase the user question to be standalone, referencing chat history if needed."),
@@ -287,10 +493,8 @@ if uploaded_files and st.session_state.processed_file_names != current_file_name
                         ("human", "{input}"),
                     ])
                 )
-
                 rag_chain = create_retrieval_chain(history_retriever, create_stuff_documents_chain(llm, qa_prompt))
-
-                st.session_state.rag_chain = RunnableWithMessageHistory(
+                runnable = RunnableWithMessageHistory(
                     rag_chain,
                     lambda session_id: st.session_state.chat_history,
                     input_messages_key="input",
@@ -298,85 +502,40 @@ if uploaded_files and st.session_state.processed_file_names != current_file_name
                     output_messages_key="answer",
                 )
 
-                st.session_state.processed_file_names = current_file_names
-                st.session_state.vectorstore_initialized = True
-                st.success(f"Indexed {len(parent_docs)} pages from {len(current_file_names)} files.")
+                with st.spinner("Thinking (using retrieved context)..."):
+                    response = runnable.invoke({"input": user_input, "context": full_context},
+                                               config={"configurable": {"session_id": "default"}})
+            except Exception:
+                st.error("RAG chain error; see parse_errors.log")
+                with open("parse_errors.log", "a") as lf:
+                    lf.write(traceback.format_exc())
+                response = None
 
-        except Exception as e:
-            st.error(f"Indexing failed: {e}")
-            with open("parse_errors.log", "a") as logf:
-                logf.write(f"Indexing pipeline exception:\n{traceback.format_exc()}\n\n")
-        finally:
-            safe_rmtree(temp_dir)
+            if isinstance(response, dict):
+                answer_text = response.get("answer") or "Based on the documents provided, I cannot answer this question."
+            else:
+                answer_text = str(response) if response else "Based on the documents provided, I cannot answer this question."
 
-    # refresh UI after indexing
-    st.rerun()
-
-# --- Show existing chat history ---
-for msg in st.session_state.chat_history.messages:
-    st.chat_message(msg.type).write(msg.content)
-
-# --- Chat input and answering ---
-if user_input := st.chat_input("Ask about your documents..."):
-    st.chat_message("human").write(user_input)
-
-    identity_triggers = ["who are you", "about yourself", "what are you", "your identity", "what do you do"]
-    is_identity_question = any(trigger in user_input.lower() for trigger in identity_triggers)
-
-    if st.session_state.rag_chain and st.session_state.vectorstore_initialized:
-        with st.spinner("Thinking..."):
+            st.chat_message("ai").write(answer_text)
             try:
-                response = st.session_state.rag_chain.invoke(
-                    {"input": user_input},
-                    config={"configurable": {"session_id": "default"}}
-                )
+                st.session_state.chat_history.add_user_message(user_input)
+                st.session_state.chat_history.add_ai_message(answer_text)
+            except Exception:
+                pass
 
-                if isinstance(response, dict):
-                    answer_text = response.get("answer") or "Based on the documents provided, I cannot answer this question."
-                    raw_context = response.get("context")
-                else:
-                    answer_text = str(response) or "Based on the documents provided, I cannot answer this question."
-                    raw_context = None
+            # Show sources only if not the refusal string
+            refusal_str = "I've checked the documents, but I can't find a clear answer to that specific question."
+            if refusal_str not in answer_text:
+                with st.expander("Sources used"):
+                    shown = set()
+                    for d in docs:
+                        md = getattr(d, "metadata", {}) or {}
+                        src = md.get("source") or md.get("filename") or "source"
+                        page = md.get("page") or md.get("page_label") or ""
+                        label = f"{src} (Page {page})" if page else src
+                        if label not in shown:
+                            st.write(f"📄 {label}")
+                            shown.add(label)
+            # else intentionally hide pages
 
-                st.chat_message("ai").write(answer_text)
-                try:
-                    st.session_state.chat_history.add_user_message(user_input)
-                    st.session_state.chat_history.add_ai_message(answer_text)
-                except Exception:
-                    pass
-
-                # show sources defensively
-                sources = set()
-                if raw_context:
-                    for d in raw_context:
-                        try:
-                            md = getattr(d, "metadata", {}) if d else {}
-                            src = md.get("source") or md.get("filename")
-                            page = md.get("page") or md.get("page_label")
-                            if src:
-                                sources.add(f"{src} (Page {page})" if page else f"{src}")
-                        except Exception:
-                            continue
-                if sources:
-                    with st.expander("Sources Used"):
-                        for s in sorted(sources):
-                            st.write(f"📄 {s}")
-
-                if os.path.exists("notification.mp3"):
-                    autoplay_audio("notification.mp3")
-
-            except Exception as e:
-                st.error(f"Query error: {e}")
-                with open("parse_errors.log", "a") as logf:
-                    logf.write(f"Query error:\n{traceback.format_exc()}\n\n")
-
-    elif is_identity_question:
-        ai_response = "I am NBT CHATBOT. I answer questions using uploaded documents."
-        st.chat_message("ai").write(ai_response)
-        try:
-            st.session_state.chat_history.add_user_message(user_input)
-            st.session_state.chat_history.add_ai_message(ai_response)
-        except Exception:
-            pass
-    else:
-        st.warning("Please upload documents first and wait for indexing to finish so I can answer.")
+# EOF

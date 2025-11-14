@@ -9,3 +9,25 @@ Temporary files created by the app
 temp.pdf
 
 venv/
+uploaded_uploads/
+tmp_parse/
+faiss_index/
+*.sqlite
+indexed_hashes.json
+parse_errors.log
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.swp
+.Python
+env/
+venv/
+.ipynb_checkpoints/

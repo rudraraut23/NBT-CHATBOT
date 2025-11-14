@@ -5,19 +5,24 @@ python-dotenv
 langchain==0.3.26
 langchain-groq
 langchain-huggingface
-
+langchain-chroma>=0.0.10
 langchain-community
 langchain-text-splitters
-sentence-transformers
+sentence-transformers>=2.2.2
 # Parsing
-llama-parse
+llama-parse>=0.1.0
 nest-asyncio
 markdownify
-
+pillow>=10.0.0
 # Utilities
 sqlalchemy
 pypdf
 docx2txt
-
+pytesseract>=0.3.10
 langchain-chroma>=0.1.0
-chromadb>=0.5.0
+chromadb>=0.3.29
+python-docx>=0.8.11
+faiss-cpu>=1.7.4
+pymupdf>=1.22.0
+torch>=2.0.1 
+streamlit>=1.25.0

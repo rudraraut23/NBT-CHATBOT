@@ -1,0 +1,270 @@
+Fri Nov 14 12:42:55 2025 - Mistral image OCR error
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 119, in mistral_ocr_image
+    result = mistral_client.ocr(image_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'Ocr' object is not callable
+
+
+Fri Nov 14 12:42:55 2025 - vectorstore build error
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 308, in <module>
+    vectorstore.add_documents(child_docs)
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\langchain_core\vectorstores\base.py", line 279, in add_documents
+    return self.add_texts(texts, metadatas, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\langchain_chroma\vectorstores.py", line 578, in add_texts
+    self._collection.upsert(
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\chromadb\api\models\Collection.py", line 477, in upsert
+    ) = self._validate_embedding_set(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\chromadb\api\models\Collection.py", line 545, in _validate_embedding_set
+    valid_ids = validate_ids(maybe_cast_one_to_many_ids(ids))
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\chromadb\api\types.py", line 228, in validate_ids
+    raise ValueError(f"Expected IDs to be a non-empty list, got {len(ids)} IDs")
+ValueError: Expected IDs to be a non-empty list, got 0 IDs
+
+
+Fri Nov 14 12:44:34 2025 - Mistral OCR (image) failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 109, in mistral_ocr_image
+    result = mistral_client.ocr(image_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'Ocr' object is not callable
+
+
+Fri Nov 14 12:47:11 2025 - Mistral OCR (image) failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 109, in mistral_ocr_image
+    result = mistral_client.ocr(image_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'Ocr' object is not callable
+
+
+Fri Nov 14 12:47:13 2025 - parse_file failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 269, in <module>
+    docs = asyncio.get_event_loop().run_until_complete(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+           ^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\futures.py", line 203, in result
+    raise self._exception.with_traceback(self._exception_tb)
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\tasks.py", line 267, in __step
+    result = coro.send(None)
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 141, in parse_file
+    pages = await mistral_ocr_pdf(file_bytes)
+                  ^^^^^^^^^^^^^^^
+NameError: name 'mistral_ocr_pdf' is not defined
+
+
+Fri Nov 14 12:47:13 2025 - parse_file failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 269, in <module>
+    docs = asyncio.get_event_loop().run_until_complete(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+           ^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\futures.py", line 203, in result
+    raise self._exception.with_traceback(self._exception_tb)
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\tasks.py", line 267, in __step
+    result = coro.send(None)
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 141, in parse_file
+    pages = await mistral_ocr_pdf(file_bytes)
+                  ^^^^^^^^^^^^^^^
+NameError: name 'mistral_ocr_pdf' is not defined
+
+
+Fri Nov 14 12:47:31 2025 - Mistral OCR (image) failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 109, in mistral_ocr_image
+    result = mistral_client.ocr(image_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'Ocr' object is not callable
+
+
+Fri Nov 14 12:47:35 2025 - Mistral OCR (image) failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 109, in mistral_ocr_image
+    result = mistral_client.ocr(image_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'Ocr' object is not callable
+
+
+Fri Nov 14 12:47:36 2025 - parse_file failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 269, in <module>
+    docs = asyncio.get_event_loop().run_until_complete(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+           ^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\futures.py", line 203, in result
+    raise self._exception.with_traceback(self._exception_tb)
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\tasks.py", line 267, in __step
+    result = coro.send(None)
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 141, in parse_file
+    pages = await mistral_ocr_pdf(file_bytes)
+                  ^^^^^^^^^^^^^^^
+NameError: name 'mistral_ocr_pdf' is not defined
+
+
+Fri Nov 14 12:50:12 2025 - Mistral OCR (image) failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 109, in mistral_ocr_image
+    result = mistral_client.ocr(image_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'Ocr' object is not callable
+
+
+Fri Nov 14 12:50:12 2025 - parse_file failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 287, in <module>
+    docs = asyncio.get_event_loop().run_until_complete(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+           ^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\futures.py", line 203, in result
+    raise self._exception.with_traceback(self._exception_tb)
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\tasks.py", line 267, in __step
+    result = coro.send(None)
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 155, in parse_file
+    return [Document(page_content=text, metadata={"source": filename, "page": 1})]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\langchain_core\documents\base.py", line 300, in __init__
+    super().__init__(page_content=page_content, **kwargs)
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\langchain_core\load\serializable.py", line 115, in __init__
+    super().__init__(*args, **kwargs)
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\pydantic\main.py", line 253, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 1 validation error for Document
+page_content
+  Input should be a valid string [type=string_type, input_value=None, input_type=NoneType]
+    For further information visit https://errors.pydantic.dev/2.11/v/string_type
+
+
+Fri Nov 14 12:50:12 2025 - Mistral OCR PDF failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 123, in mistral_ocr_pdf
+    result = mistral_client.ocr(pdf_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'Ocr' object is not callable
+
+
+Fri Nov 14 12:50:12 2025 - Mistral OCR PDF failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 123, in mistral_ocr_pdf
+    result = mistral_client.ocr(pdf_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'Ocr' object is not callable
+
+
+Fri Nov 14 12:54:32 2025 - Mistral OCR (image) failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 109, in mistral_ocr_image
+    result = mistral_client.ocr(image_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'Ocr' object is not callable
+
+
+Fri Nov 14 12:54:34 2025 - parse_file failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 270, in <module>
+    docs = asyncio.get_event_loop().run_until_complete(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+           ^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\futures.py", line 203, in result
+    raise self._exception.with_traceback(self._exception_tb)
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\tasks.py", line 267, in __step
+    result = coro.send(None)
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 142, in parse_file
+    pages = await mistral_ocr_pdf(file_bytes)
+                  ^^^^^^^^^^^^^^^
+NameError: name 'mistral_ocr_pdf' is not defined
+
+
+Fri Nov 14 12:54:34 2025 - parse_file failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 270, in <module>
+    docs = asyncio.get_event_loop().run_until_complete(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+           ^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\futures.py", line 203, in result
+    raise self._exception.with_traceback(self._exception_tb)
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\tasks.py", line 267, in __step
+    result = coro.send(None)
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 142, in parse_file
+    pages = await mistral_ocr_pdf(file_bytes)
+                  ^^^^^^^^^^^^^^^
+NameError: name 'mistral_ocr_pdf' is not defined
+
+
+Fri Nov 14 12:59:31 2025 - Mistral OCR (image) failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 109, in mistral_ocr_image
+    result = mistral_client.ocr(image_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'Ocr' object is not callable
+
+
+Fri Nov 14 12:59:32 2025 - parse_file failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 271, in <module>
+    docs = asyncio.get_event_loop().run_until_complete(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+           ^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\futures.py", line 203, in result
+    raise self._exception.with_traceback(self._exception_tb)
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\tasks.py", line 267, in __step
+    result = coro.send(None)
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 143, in parse_file
+    pages = await mistral_ocr_pdf(file_bytes)
+                  ^^^^^^^^^^^^^^^
+NameError: name 'mistral_ocr_pdf' is not defined
+
+
+Fri Nov 14 12:59:32 2025 - parse_file failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 271, in <module>
+    docs = asyncio.get_event_loop().run_until_complete(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\site-packages\nest_asyncio.py", line 98, in run_until_complete
+    return f.result()
+           ^^^^^^^^^^
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\futures.py", line 203, in result
+    raise self._exception.with_traceback(self._exception_tb)
+  File "C:\Users\rautr\AppData\Local\Programs\Python\Python311\Lib\asyncio\tasks.py", line 267, in __step
+    result = coro.send(None)
+             ^^^^^^^^^^^^^^^
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 143, in parse_file
+    pages = await mistral_ocr_pdf(file_bytes)
+                  ^^^^^^^^^^^^^^^
+NameError: name 'mistral_ocr_pdf' is not defined
+
+
+Fri Nov 14 12:59:33 2025 - Mistral OCR (image) failed
+Traceback (most recent call last):
+  File "C:\Users\rautr\Desktop\Scalable AI Chatbot\app.py", line 109, in mistral_ocr_image
+    result = mistral_client.ocr(image_bytes)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+TypeError: 'Ocr' object is not callable
+
+
