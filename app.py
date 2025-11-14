@@ -1,13 +1,27 @@
-# streamlit_app.py
-"""
-Optimized Streamlit RAG app for CA / Lawyer workflows.
+import base64
+import os
+import streamlit as st
 
-Fixes:
-- Removed invalid `continue` uses (top-level, outside loops).
-- Uses handled flag / if/else for control flow in chat handler.
-- Fast PDF parsing (PyMuPDF), optional OCR, SBERT embeddings, Chroma->FAISS fallback.
-- Progress bars and MD5 skip-reindex logic.
-"""
+def play_notification_sound():
+    sound_file = "notification.mp3"  # adjust if your filename is different
+
+    if os.path.exists(sound_file):
+        with open(sound_file, "rb") as f:
+            audio_bytes = f.read()
+
+        encoded = base64.b64encode(audio_bytes).decode()
+
+        audio_html = f"""
+        <audio autoplay="true" style="display:none;">
+            <source src="data:audio/mp3;base64,{encoded}" type="audio/mp3">
+        </audio>
+        """
+
+        st.markdown(audio_html, unsafe_allow_html=True)
+    else:
+        st.warning(f"Sound file not found: {sound_file}")
+
+
 
 import os
 import io
@@ -517,6 +531,8 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
                 answer_text = str(response) if response else "Based on the documents provided, I cannot answer this question."
 
             st.chat_message("ai").write(answer_text)
+
+            play_notification_sound()
             try:
                 st.session_state.chat_history.add_user_message(user_input)
                 st.session_state.chat_history.add_ai_message(answer_text)
