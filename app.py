@@ -1,28 +1,5 @@
+# app.py
 import base64
-import os
-import streamlit as st
-
-def play_notification_sound():
-    sound_file = "notification.mp3"  # adjust if your filename is different
-
-    if os.path.exists(sound_file):
-        with open(sound_file, "rb") as f:
-            audio_bytes = f.read()
-
-        encoded = base64.b64encode(audio_bytes).decode()
-
-        audio_html = f"""
-        <audio autoplay="true" style="display:none;">
-            <source src="data:audio/mp3;base64,{encoded}" type="audio/mp3">
-        </audio>
-        """
-
-        st.markdown(audio_html, unsafe_allow_html=True)
-    else:
-        st.warning(f"Sound file not found: {sound_file}")
-
-
-
 import os
 import io
 import time
@@ -30,8 +7,9 @@ import json
 import hashlib
 import shutil
 import traceback
+import re
 from multiprocessing import cpu_count
-from typing import List, Tuple, Sequence, Any, Callable
+from typing import List, Tuple, Sequence
 
 import streamlit as st
 from dotenv import load_dotenv
@@ -99,6 +77,9 @@ RETRIEVE_K_DEFAULT = 5
 
 DEFAULT_MODEL_NAME = "llama-3.1-8b-instant"
 LLM_TEMPERATURE = 0.0
+
+# Developer-provided uploaded image path (will be transformed to URL by tooling if needed)
+UPLOADED_IMAGE_PATH = "/mnt/data/50d3186c-4849-4057-90b0-ccf66cd970ac.png"
 
 # ---------- Utilities ----------
 def ensure_dirs():
@@ -215,6 +196,41 @@ def init_vectorstore_faiss_from_texts(texts, metas, embeddings):
         raise RuntimeError("FAISS not available")
     return FAISS.from_texts(texts, embeddings, metadatas=metas)
 
+# ---------- Notification sound ----------
+def play_notification_sound():
+    sound_file = "notification.mp3"  # adjust if your filename is different
+
+    if os.path.exists(sound_file):
+        with open(sound_file, "rb") as f:
+            audio_bytes = f.read()
+
+        encoded = base64.b64encode(audio_bytes).decode()
+
+        audio_html = f"""
+        <audio autoplay="true" style="display:none;">
+            <source src="data:audio/mp3;base64,{encoded}" type="audio/mp3">
+        </audio>
+        """
+
+        st.markdown(audio_html, unsafe_allow_html=True)
+    else:
+        # do not spam warning if sound missing
+        pass
+
+# ---------- Small verification helpers ----------
+def extract_numbers(s: str):
+    return re.findall(r"\d+(?:\.\d+)?", s)
+
+def ngram_overlap(a: str, b: str, n: int = 5) -> float:
+    atoks = [t for t in re.findall(r"\w+", a.lower())]
+    btoks = [t for t in re.findall(r"\w+", b.lower())]
+    if len(atoks) < n:
+        return 0.0
+    a_ngrams = {" ".join(atoks[i:i+n]) for i in range(len(atoks)-n+1)}
+    b_text = " ".join(btoks)
+    matches = sum(1 for ng in a_ngrams if ng in b_text)
+    return matches / max(1, len(a_ngrams))
+
 # ---------- App UI & Flow ----------
 load_dotenv()
 ensure_dirs()
@@ -226,25 +242,64 @@ st.markdown("<style>.main{background-color:#f7f9fc;}</style>", unsafe_allow_html
 groq_api_key = os.getenv("GROQ_API_KEY")
 llama_api_key = os.getenv("LLAMA_CLOUD_API_KEY")
 
-# Sidebar controls
-with st.sidebar:
-    st.header("Controls — Optimized RAG")
-    st.markdown("Tune chunking/retrieval for legal/CA docs.")
-    CHUNK_SIZE = st.number_input("Chunk size (chars)", value=CHUNK_SIZE_DEFAULT, min_value=200, max_value=2000, step=100)
-    CHUNK_OVERLAP = st.number_input("Chunk overlap (chars)", value=CHUNK_OVERLAP_DEFAULT, min_value=0, max_value=1000, step=25)
-    RETRIEVE_K = st.number_input("Top-K retrieve", value=RETRIEVE_K_DEFAULT, min_value=1, max_value=20, step=1)
-    if st.button("Clear indexed metadata & reprocess"):
-        if os.path.exists(HASH_STORE):
-            os.remove(HASH_STORE)
-        safe_rmtree(FAISS_DIR)
-        st.session_state.processed_file_names = []
-        st.session_state.rag_chain = None
-        st.session_state.vectorstore = None
-        st.success("Cleared indexing metadata.")
-        st.rerun()
+# Use defaults (removed left sidebar controls as requested)
+CHUNK_SIZE = CHUNK_SIZE_DEFAULT
+CHUNK_OVERLAP = CHUNK_OVERLAP_DEFAULT
+RETRIEVE_K = RETRIEVE_K_DEFAULT
 
-uploaded_files = st.file_uploader("Upload Documents (PDF, DOCX, Images)", accept_multiple_files=True,
-                                  type=["pdf", "docx", "png", "jpg", "jpeg"])
+# ---------- Replace uploader + clear logic with this block ----------
+# make sure UPLOADS_DIR, HASH_STORE, FAISS_DIR and helper functions (ensure_dirs, safe_rmtree, load_indexed_hashes, save_indexed_hashes) exist above
+
+# Use a key so we can reset the uploader widget
+# ---------- Safe uploader + clear logic (avoid modifying widget-backed keys) ----------
+# ---------------- FIXED Uploader + Clear Logic ----------------
+if "uploader_key" not in st.session_state:
+    st.session_state.uploader_key = "uploader_1"
+
+def hard_reset_uploader():
+    # cycle to a brand-new key → forces Streamlit to recreate the uploader widget
+    st.session_state.uploader_key = f"uploader_{time.time()}"
+
+    # remove uploaded files folder
+    if os.path.exists(UPLOADS_DIR):
+        for f in os.listdir(UPLOADS_DIR):
+            try:
+                os.remove(os.path.join(UPLOADS_DIR, f))
+            except:
+                pass
+
+    # delete index data
+    if os.path.exists(HASH_STORE):
+        try: os.remove(HASH_STORE)
+        except: pass
+
+    safe_rmtree(FAISS_DIR)
+
+    # clear session state objects
+    for k in [
+        "processed_file_names", "vectorstore", "vectorstore_kind", "rag_chain",
+        "file_hashes", "file_paths", "chat_history"
+    ]:
+        if k in st.session_state:
+            del st.session_state[k]
+
+    st.session_state.processed_file_names = []
+    st.session_state.file_hashes = {}
+    st.session_state.file_paths = {}
+
+    st.rerun()
+
+
+uploaded_files = st.file_uploader(
+    "Upload Documents (PDF, DOCX, Images)",
+    accept_multiple_files=True,
+    type=["pdf", "docx", "png", "jpg", "jpeg"],
+    key=st.session_state.uploader_key
+)
+
+if st.button("Clear uploaded files and indexing"):
+    hard_reset_uploader()
+# ---------------- END FIXED BLOCK ----------------
 
 if SentenceTransformer is None:
     st.error("Install sentence-transformers to enable embeddings: pip install sentence-transformers")
@@ -257,7 +312,7 @@ device = "cuda" if use_cuda else "cpu"
 if use_cuda:
     st.info("GPU available — embeddings will run on GPU.")
 else:
-    st.info("Embeddings on CPU.")
+    st.info("NBT AT CPU")
 
 sbert_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
 embeddings_wrapper = SimpleEmbeddings(sbert_model)
@@ -274,7 +329,7 @@ if 'file_hashes' not in st.session_state:
 if 'file_paths' not in st.session_state:
     st.session_state.file_paths = {}
 
-st.title("🤖 NBT Advanced RAG Chatbot (Optimized)")
+st.title("🤖 NBT Advanced RAG Chatbot ")
 
 # Initialize LLM (Groq) if available
 llm = None
@@ -294,8 +349,12 @@ if uploaded_files and st.session_state.processed_file_names != current_names:
         content = uf.getvalue()
         h = md5_bytes(content)
         dest = os.path.join(UPLOADS_DIR, uf.name)
-        with open(dest, "wb") as wf:
-            wf.write(content)
+        try:
+            with open(dest, "wb") as wf:
+                wf.write(content)
+        except Exception:
+            st.error(f"Cannot write uploaded file to disk: {uf.name}. Check server permission.")
+            continue
         st.session_state.file_paths[uf.name] = dest
         prev_h = st.session_state.file_hashes.get(uf.name)
         if prev_h == h and st.session_state.vectorstore is not None:
@@ -530,8 +589,8 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
             else:
                 answer_text = str(response) if response else "Based on the documents provided, I cannot answer this question."
 
+            # show assistant answer
             st.chat_message("ai").write(answer_text)
-
             play_notification_sound()
             try:
                 st.session_state.chat_history.add_user_message(user_input)
@@ -539,19 +598,79 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
             except Exception:
                 pass
 
-            # Show sources only if not the refusal string
-            refusal_str = "I've checked the documents, but I can't find a clear answer to that specific question."
-            if refusal_str not in answer_text:
-                with st.expander("Sources used"):
-                    shown = set()
-                    for d in docs:
-                        md = getattr(d, "metadata", {}) or {}
-                        src = md.get("source") or md.get("filename") or "source"
-                        page = md.get("page") or md.get("page_label") or ""
-                        label = f"{src} (Page {page})" if page else src
-                        if label not in shown:
-                            st.write(f"📄 {label}")
-                            shown.add(label)
-            # else intentionally hide pages
 
-# EOF
+
+if "answer_text" in locals():
+    refusal_str = "I've checked the documents, but I can't find a clear answer to that specific question."
+    if refusal_str not in answer_text:
+        with st.expander("Sources used"):
+            # ensure docs is iterable
+            candidate_docs = docs if isinstance(docs, (list, tuple)) else []
+
+            # extract numbers (if numeric answer)
+            try:
+                ans_numbers = extract_numbers(answer_text)
+            except Exception:
+                ans_numbers = []
+
+            # group candidates per source
+            per_source_candidates = {}
+            for d in candidate_docs:
+                md = getattr(d, "metadata", {}) or {}
+                src = md.get("source") or md.get("filename") or "source"
+                page = md.get("page") or md.get("page_label") or ""
+                label = src
+
+                snippet_full = (d.page_content or "").strip()
+                snippet_short = snippet_full[:2000] + (" …" if len(snippet_full) > 2000 else "")
+
+                # scoring
+                score = 0.0
+                if ans_numbers:
+                    try:
+                        doc_numbers = extract_numbers(snippet_full)
+                    except Exception:
+                        doc_numbers = []
+                    if any(n in doc_numbers for n in ans_numbers):
+                        score = 1.0
+                else:
+                    try:
+                        score = float(ngram_overlap(answer_text, snippet_full, n=5))
+                    except Exception:
+                        score = 0.0
+
+                per_source_candidates.setdefault(label, []).append({
+                    "page": page,
+                    "score": score,
+                    "snippet_short": snippet_short
+                })
+
+            # pick best page per source (deterministic tie-breaker: lower page number)
+            selected_sources = []
+            for src_label, entries in per_source_candidates.items():
+                entries_sorted = sorted(
+                    entries,
+                    key=lambda e: (-e["score"], int(e["page"]) if str(e["page"]).isdigit() else 10**9)
+                )
+                best = entries_sorted[0]
+                others = entries_sorted[1:] if len(entries_sorted) > 1 else []
+                selected_sources.append((src_label, best, others))
+
+            # display minimal output: filename + page + confidence + local file path
+            FILE_URL = "/mnt/data/50d3186c-4849-4057-90b0-ccf66cd970ac.png"  # developer-provided local path
+
+            if not selected_sources:
+                st.write("No document pages were strongly matched to this answer.")
+            else:
+                for src_label, best, others in selected_sources:
+                    conf = best.get("score", 0.0)
+                    page_txt = f"(Page {best['page']})" if best.get("page") else "(Page unknown)"
+                    badge = "✅" if conf >= 0.85 else ("⚠️" if conf >= 0.5 else "ℹ️")
+
+                    # minimal, single line
+                    st.write(f"{badge} **{src_label} {page_txt}** — Confidence: {conf:.2f}")
+
+                    # show the local file path (your toolchain will convert to a URL)
+                    st.write(f"🔗 File: `{FILE_URL}`")
+
+               
