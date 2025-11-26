@@ -1,15 +1,3 @@
-# app.py
-# Fixed & improved single-file Streamlit app
-# Changes made:
-# - Parallel parsing of uploaded files for speed
-# - Consistent metadata: 'orig_name' preserved and used for source linking
-# - Page numbers preserved as integers where available
-# - More robust on-disk upload dedupe and orphan-file handling
-# - Index rebuild only runs when new files appear or index missing
-# - Clearer progress info and timing for parsing/indexing
-# - Filters tiny parsed fragments via MIN_TEXT_LEN
-# - Falls back to DEV_UPLOADED_FILE_URL if on-disk mapping fails
-# - Sources used now shows only pages that actually overlap with the final answer
 
 import os
 import time
@@ -27,9 +15,9 @@ import streamlit as st
 from dotenv import load_dotenv
 import nest_asyncio
 
-# optional libs
+
 try:
-    import fitz  # PyMuPDF
+    import fitz  
 except Exception:
     fitz = None
 
@@ -40,15 +28,15 @@ except Exception:
     pytesseract = None
     Image = None
 
-# sentence-transformers
+
 try:
     from sentence_transformers import SentenceTransformer
 except Exception:
     SentenceTransformer = None
 
-# langchain pieces (kept lightweight — the code defers to available imports)
+
 from langchain_core.documents import Document
-    # noqa: E402
+
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -56,7 +44,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_community.chat_message_histories import ChatMessageHistory
 
-# attempt chroma then fallback to FAISS
+
 try:
     from langchain_chroma import Chroma
     CHROMA_AVAILABLE = True
@@ -81,26 +69,26 @@ HASH_STORE = "indexed_hashes.json"
 FAISS_DIR = "faiss_index"
 CHROMA_COLLECTION = "advanced_rag"
 
-WORKERS = max(1, min(8, cpu_count() - 1))  # bound threads for safety
+WORKERS = max(1, min(8, cpu_count() - 1))  
 CHUNK_SIZE_DEFAULT = 800
 CHUNK_OVERLAP_DEFAULT = 200
 EMBED_BATCH_SIZE = 128
-MIN_TEXT_LEN = 30            # Increase to ignore tiny captions like "Table 23"
+MIN_TEXT_LEN = 30            
 RETRIEVE_K_DEFAULT = 5
 
 DEFAULT_MODEL_NAME = "llama-3.1-8b-instant"
 LLM_TEMPERATURE = 0.0
 
-# Developer-provided file path to show in Sources used as fallback (tooling will convert this to a real URL).
+
 DEV_UPLOADED_FILE_URL = "/mnt/data/068227ba-2318-46e7-a76a-c0e73485ed39.png"
 
-# Whether to wipe persisted uploads/index on startup.
+
 CLEAN_STARTUP = True
 
-# Maximum number of pages to OCR/parse per PDF to avoid huge delays (None = all)
-PDF_MAX_PAGES = None  # set to e.g. 50 to limit
 
-# ---------- Utilities ----------
+PDF_MAX_PAGES = None  
+
+
 
 def ensure_dirs():
     os.makedirs(UPLOADS_DIR, exist_ok=True)
@@ -134,7 +122,7 @@ def save_indexed_hashes(d: dict):
     with open(HASH_STORE, "w") as f:
         json.dump(d, f)
 
-# ---------- Parsing helpers ----------
+
 
 def extract_pdf_pages(path: str, max_pages=None) -> List[Tuple[int, str]]:
     res = []
@@ -174,7 +162,7 @@ def parse_file_single(args):
     docs = []
     lower = orig_name.lower()
 
-    # PDF path
+
     if lower.endswith('.pdf') and fitz is not None:
         pages = extract_pdf_pages(path, max_pages=PDF_MAX_PAGES)
         for pnum, text in pages:
@@ -183,7 +171,7 @@ def parse_file_single(args):
                 docs.append(Document(page_content=text, metadata=meta))
         return docs
 
-    # Image path
+
     if lower.endswith(('.png', '.jpg', '.jpeg')):
         txt = ocr_image_to_text(path)
         if txt and len(txt.strip()) >= MIN_TEXT_LEN:
@@ -191,7 +179,6 @@ def parse_file_single(args):
             docs.append(Document(page_content=txt, metadata=meta))
         return docs
 
-    # Fallback LlamaParse for docx/others (slower, used only if necessary)
     try:
         parser = LlamaParse(api_key=llama_api_key, result_type="markdown", verbose=False, language="en")
         maybe = parser.load_data(path)
@@ -204,11 +191,11 @@ def parse_file_single(args):
                     meta_out = {"source": orig_name, "orig_name": orig_name, "page": page_lbl, **meta}
                     docs.append(Document(page_content=text, metadata=meta_out))
     except Exception:
-        # if parser fails, return empty — errors logged by caller
+
         pass
     return docs
 
-# ---------- Embedding wrapper ----------
+
 class SimpleEmbeddings:
     def __init__(self, model):
         self.model = model
@@ -219,7 +206,6 @@ class SimpleEmbeddings:
         arr = self.model.encode([text], show_progress_bar=False, convert_to_numpy=True)
         return arr[0].tolist()
 
-# ---------- Vectorstore helpers ----------
 def init_vectorstore_chroma(embeddings):
     if not CHROMA_AVAILABLE:
         raise RuntimeError("Chroma is not available")
@@ -232,7 +218,6 @@ def init_vectorstore_faiss_from_texts(texts, metas, embeddings):
         raise RuntimeError("FAISS not available")
     return FAISS.from_texts(texts, embeddings, metadatas=metas)
 
-# ---------- Small helpers ----------
 
 def extract_numbers(s: str):
     return re.findall(r"\d+(?:\.\d+)?", s)
@@ -265,20 +250,19 @@ def answer_doc_overlap(answer: str, doc_text: str) -> float:
 
 
 
-
-# ---------- App UI & Flow ----------
+#App UI
 load_dotenv()
 ensure_dirs()
 
-st.set_page_config(page_title="NBT Advanced RAG (Fixed)", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="NBT Advanced RAG ", page_icon="🤖", layout="wide")
 st.markdown("<style>.main{background-color:#0b0d10;color:#fff}</style>", unsafe_allow_html=True)
 
-# Clean startup (optional) to avoid stale persisted files
+
 if CLEAN_STARTUP and "startup_cleaned" not in st.session_state:
     for key in ["file_paths", "file_hashes", "processed_file_names", "vectorstore", "vectorstore_kind", "rag_chain", "chat_history"]:
         if key in st.session_state:
             del st.session_state[key]
-    # remove on-disk uploads and persisted indexes when desired
+
     try:
         for f in os.listdir(UPLOADS_DIR):
             try: os.remove(os.path.join(UPLOADS_DIR, f))
@@ -292,22 +276,21 @@ if CLEAN_STARTUP and "startup_cleaned" not in st.session_state:
         except: pass
     st.session_state.startup_cleaned = True
 
-# Keys
+#Keys are stored in .env file
 groq_api_key = os.getenv("GROQ_API_KEY")
 llama_api_key = os.getenv("LLAMA_CLOUD_API_KEY")
 
-# Chunk settings visible in UI
 CHUNK_SIZE = CHUNK_SIZE_DEFAULT
 CHUNK_OVERLAP = CHUNK_OVERLAP_DEFAULT
 RETRIEVE_K = RETRIEVE_K_DEFAULT
 
-# Uploader + clear logic
+
 if "uploader_key" not in st.session_state:
     st.session_state.uploader_key = "uploader_1"
 
 def hard_reset_uploader():
     st.session_state.uploader_key = f"uploader_{time.time()}"
-    # remove persisted on-disk uploads and index files
+    
     try:
         for f in os.listdir(UPLOADS_DIR):
             try: os.remove(os.path.join(UPLOADS_DIR, f))
@@ -341,7 +324,7 @@ if SentenceTransformer is None:
     st.error("Install sentence-transformers: pip install sentence-transformers")
     st.stop()
 
-# initialize SBERT
+
 import torch
 use_cuda = torch.cuda.is_available()
 device = "cuda" if use_cuda else "cpu"
@@ -353,7 +336,7 @@ else:
 sbert_model = SentenceTransformer("all-MiniLM-L6-v2", device=device)
 embeddings_wrapper = SimpleEmbeddings(sbert_model)
 
-# session defaults & normalization
+
 if 'processed_file_names' not in st.session_state:
     st.session_state.processed_file_names = []
 if 'vectorstore' not in st.session_state:
@@ -365,7 +348,7 @@ if 'file_hashes' not in st.session_state:
 if 'file_paths' not in st.session_state:
     st.session_state.file_paths = {}
 
-# Normalize older session shapes (avoid string vs dict mismatch)
+
 _normalized_paths = {}
 for key, val in list(st.session_state.file_paths.items()):
     try:
@@ -393,9 +376,9 @@ st.session_state.processed_file_names = sorted(
     {info.get("orig_name") for info in st.session_state.file_paths.values() if isinstance(info, dict) and info.get("orig_name")}
 )
 
-st.title("🤖 NBT Advanced RAG Chatbot (Fixed & Faster)")
+st.title("🤖 NBT Advanced RAG Chatbot ")
 
-# Initialize LLM (Groq) if available
+
 llm = None
 if groq_api_key:
     try:
@@ -403,13 +386,13 @@ if groq_api_key:
     except Exception:
         st.warning("Could not initialize Groq LLM; continuing with indexing-only features.")
 
-# ---------- Save uploads persistently (unique on-disk names) ----------
+
 new_files_to_process = []
 if uploaded_files:
     for uf in uploaded_files:
         content = uf.getvalue()
         h = md5_bytes(content)
-        # skip duplicates by content hash
+   
         already = False
         for info in st.session_state.file_paths.values():
             if info.get("hash") == h:
@@ -433,7 +416,7 @@ if uploaded_files:
         }
         new_files_to_process.append((uf.name, dest, h, unique_on_disk_name))
 
-# include orphan files found on disk (useful if files were saved earlier)
+
 for fname in os.listdir(UPLOADS_DIR):
     if fname not in st.session_state.file_paths:
         path = os.path.join(UPLOADS_DIR, fname)
@@ -445,15 +428,13 @@ for fname in os.listdir(UPLOADS_DIR):
         except Exception:
             pass
 
-# ---------- Force rebuild when new uploads arrived (most robust) ----------
-# Rebuild only if new files present or no vectorstore exists
 if new_files_to_process or st.session_state.vectorstore is None:
     if new_files_to_process:
         st.info("New uploads detected — rebuilding index to include latest files.")
     else:
         st.info("No vectorstore found — building index from available files.")
 
-    # clear in-memory and on-disk index artifacts so we start fresh
+ 
     st.session_state.vectorstore = None
     try:
         safe_rmtree(FAISS_DIR)
@@ -465,7 +446,6 @@ if new_files_to_process or st.session_state.vectorstore is None:
         except Exception:
             pass
 
-    # parse all saved files in parallel (faster)
     all_parent_docs = []
     parse_args = []
     for key, info in st.session_state.file_paths.items():
@@ -488,7 +468,7 @@ if new_files_to_process or st.session_state.vectorstore is None:
                 errors.append(traceback.format_exc())
     parse_time = time.time() - parse_start
 
-    # Chunk all_parent_docs and build vectors
+   
     splitter = RecursiveCharacterTextSplitter(chunk_size=int(CHUNK_SIZE), chunk_overlap=int(CHUNK_OVERLAP))
     all_texts = []
     all_metas = []
@@ -501,7 +481,7 @@ if new_files_to_process or st.session_state.vectorstore is None:
             meta = c.metadata or {}
             src = meta.get("orig_name") or meta.get("source") or doc.metadata.get("orig_name") or doc.metadata.get("source")
             page = meta.get("page") or doc.metadata.get("page") or ""
-            # normalize page
+          
             try:
                 page_num = int(page)
             except Exception:
@@ -510,7 +490,7 @@ if new_files_to_process or st.session_state.vectorstore is None:
             all_texts.append(text)
             all_metas.append({"source": src, "orig_name": src, "page": page_num, "chunk_id": chunk_id})
 
-    # create fresh vectorstore (Chroma preferred)
+   
     def _create_vs_from_texts(texts, metas):
         try:
             if CHROMA_AVAILABLE:
@@ -545,7 +525,7 @@ if new_files_to_process or st.session_state.vectorstore is None:
         st.session_state.file_hashes[unique_key] = h
     save_indexed_hashes(st.session_state.file_hashes)
 
-# Keep processed_file_names list up-to-date (for UI tracking)
+
 st.session_state.processed_file_names = sorted([info["orig_name"] for info in st.session_state.file_paths.values()])
 
 # Debug expander: show indexed files + chunk config
@@ -553,18 +533,18 @@ with st.expander("Indexed files (persistent) — click to view"):
     st.write({k: {"orig_name": v["orig_name"], "hash": v["hash"], "path": v["path"]} for k, v in st.session_state.file_paths.items()})
     st.write({"chunk_size": CHUNK_SIZE, "chunk_overlap": CHUNK_OVERLAP, "min_text_len": MIN_TEXT_LEN})
 
-# ---------- Chat / retrieval ----------
+
 # show chat history
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = ChatMessageHistory()
 for msg in st.session_state.chat_history.messages:
     st.chat_message(msg.type).write(msg.content)
 
-# chat input
+
 if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."):
     st.chat_message("human").write(user_input)
 
-    # identity question
+  
     identity_triggers = ["who are you", "about yourself", "what are you", "your identity", "what do you do"]
     is_identity = any(t in user_input.lower() for t in identity_triggers)
     handled = False
@@ -579,7 +559,7 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
             pass
         handled = True
 
-    # If not handled and no vectorstore -> warn
+  
     if not handled and st.session_state.vectorstore is None:
         st.warning("Please upload and index documents first.")
         handled = True
@@ -587,7 +567,7 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
     if not handled:
         vs = st.session_state.vectorstore
 
-        # Build QA prompt (used below with history-aware retriever)
+        
         system_prompt = (
             "You are a helpful document assistant specialized for legal / chartered-accountant documents. "
             "Your first priority is to answer questions using the provided document context. "
@@ -605,10 +585,9 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
             ("human", "{input}")
         ])
 
-        # --- robust retrieval: try to get docs + retriever scores (works with FAISS/Chroma wrappers) ---
         def get_docs_with_scores(vs_obj, query: str, k: int = RETRIEVE_K):
             out = []
-            # 1) FAISS-like API
+           
             try:
                 docs_and_scores = vs_obj.similarity_search_with_score(query, k=k)
                 for d, s in docs_and_scores:
@@ -617,7 +596,7 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
             except Exception:
                 pass
 
-            # 2) try retriever.get_relevant_documents and look for score in metadata
+            
             try:
                 retr = vs_obj.as_retriever(search_kwargs={"k": k}) if getattr(vs_obj, "as_retriever", None) else vs_obj.get_retriever(k=k)
                 docs = retr.get_relevant_documents(query)
@@ -633,7 +612,7 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
             except Exception:
                 pass
 
-            # 3) fallback similarity_search (no scores)
+            
             try:
                 docs = vs_obj.similarity_search(query, k=k)
                 for d in docs:
@@ -642,7 +621,7 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
             except Exception:
                 return []
 
-        # create a retriever object for the history-aware step (some chains expect a retriever)
+        
         try:
             if getattr(vs, "as_retriever", None):
                 retriever = vs.as_retriever(search_kwargs={"k": int(RETRIEVE_K)})
@@ -659,11 +638,11 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
                         return []
             retriever = _SimpleRetriever(vs)
 
-        # obtain docs with scores and sort them (highest score first)
+       
         docs_with_scores = get_docs_with_scores(vs, user_input, k=int(RETRIEVE_K))
         docs_sorted = sorted(docs_with_scores, key=lambda x: -float(x.get("score", 0.0)))
 
-        # Build full_context from retriever-ordered docs (highest scoring first)
+        
         context_pieces = []
         for item in docs_sorted:
             d = item["doc"]
@@ -676,7 +655,7 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
             context_pieces.append(f"---\nSource: {header}\n{snippet_short}")
         full_context = "\n\n".join(context_pieces)
 
-        # Now create and invoke the history-aware RAG chain
+     
         try:
             history_retriever = create_history_aware_retriever(
                 llm, retriever, ChatPromptTemplate.from_messages([
@@ -708,7 +687,7 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
         else:
             answer_text = str(response) if response else "Based on the documents provided, I cannot answer this question."
 
-        # show assistant answer
+        
         st.chat_message("ai").write(answer_text)
         try:
             st.session_state.chat_history.add_user_message(user_input)
@@ -716,21 +695,20 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
         except Exception:
             pass
 
-# ---------- Sources used expander (filtered by overlap with final answer) ----------
-# ---------- Sources used expander (only chunks that overlap with *current* answer) ----------
+
 if "answer_text" in locals():
     refusal_str = "I've checked the documents, but I can't find a clear answer to that specific question."
     if refusal_str not in answer_text:
         with st.expander("Sources used"):
-            # docs_sorted is created freshly for each question inside the chat block
+            
             local_docs_sorted = locals().get("docs_sorted", [])
 
             if not local_docs_sorted:
                 st.write("No document pages were strongly matched to this answer.")
             else:
-                OVERLAP_THRESHOLD = 0.45 # increase to be stricter, decrease to be more permissive
+                OVERLAP_THRESHOLD = 0.45 
 
-                # 1) keep only chunks that significantly overlap with the CURRENT answer text
+              
                 filtered = []
                 for item in local_docs_sorted:
                     d = item.get("doc")
@@ -744,7 +722,7 @@ if "answer_text" in locals():
                 if not filtered:
                     st.write("Retrieved pages had very low overlap with the final answer; no reliable sources to show.")
                 else:
-                    # 2) group by (source, page) so each page shows once
+                    
                     grouped = {}
                     for item in filtered:
                         d = item.get("doc")
@@ -754,7 +732,7 @@ if "answer_text" in locals():
                         key = (src, page)
                         grouped.setdefault(key, []).append(item)
 
-                    # 3) sort groups by combined vec-score + overlap
+                    
                     display_rows = []
                     for (src, page), arr in grouped.items():
                         best_score = max(float(a.get("score", 0.0)) for a in arr)
@@ -773,7 +751,7 @@ if "answer_text" in locals():
                             f"Overlap with answer: {best_overlap:.2f}"
                         )
 
-                        # map src -> on-disk file path for this session
+                        
                         file_url = None
                         for ondisk, info in st.session_state.file_paths.items():
                             try:
