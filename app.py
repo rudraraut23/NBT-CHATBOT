@@ -10,10 +10,33 @@ import shutil
 from multiprocessing import cpu_count
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple, Sequence
+import base64
 
 import streamlit as st
 from dotenv import load_dotenv
 import nest_asyncio
+
+def play_notification_sound():
+    
+    try:
+        audio_path = os.path.join(os.path.dirname(__file__), "notification.mp3")
+        if not os.path.exists(audio_path):
+            return  
+
+        with open(audio_path, "rb") as f:
+            audio_bytes = f.read()
+
+        b64 = base64.b64encode(audio_bytes).decode("utf-8")
+        audio_html = f"""
+        <audio autoplay="true">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+        </audio>
+        """
+        st.markdown(audio_html, unsafe_allow_html=True)
+    except Exception:
+        # If anything fails, just ignore so it doesn't break the app
+        pass
+
 
 
 try:
@@ -552,6 +575,8 @@ if user_input := st.chat_input("Ask about your documents (legal/CA friendly)..."
     if is_identity:
         ai_resp = "I am NBT Advanced RAG — I answer questions using your uploaded documents (CA / legal friendly)."
         st.chat_message("ai").write(ai_resp)
+
+        play_notification_sound()
         try:
             st.session_state.chat_history.add_user_message(user_input)
             st.session_state.chat_history.add_ai_message(ai_resp)
