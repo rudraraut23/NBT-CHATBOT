@@ -10,6 +10,7 @@ from multiprocessing import cpu_count
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Tuple, Sequence
 import base64
+import pandas as pd
 
 import streamlit as st
 from dotenv import load_dotenv
